@@ -41,3 +41,7 @@
 **فایل‌های جدید/تغییریافته:** ExamResult.kt، ResultStore.kt، screens/ExamTestEditorScreen.kt، screens/TeacherResultsScreen.kt؛ ExamStore، ExamText، ExamPackage، ExamLabels، ExamSession، SessionStore، MainActivity، AndroidManifest، ImportScreen، SetupScreen، ExamModeScreen، QuizScreen، TeacherChapterScreen.
 
 **آزمون‌شده:** منطق (ذخیره/ارسال/بازیابی گزینه‌ها و زمان، تصحیح خودکار، کد نتیجه، ذخیرهٔ نتایج) روی JVM: ۸۹ + ۳۸ بررسی موفق. **آزمون‌نشده:** کد Compose روی کامپایلر اندروید/دستگاه.
+
+### اصلاح‌های بعدی
+- `versionCode` حالا `GITHUB_RUN_NUMBER + 1000` است تا نصب روی نسخهٔ قبلی (به‌روزرسانی) رد نشود.
+- CrashReport.kt: اگر برنامه ناگهان بسته شود، دفعهٔ بعد متن خطا نشان داده می‌شود (قابل کپی) تا بتوان علت را پیدا کرد.

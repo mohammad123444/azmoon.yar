@@ -113,6 +113,13 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        CrashReport.install(this)
+        val lastCrash = CrashReport.pending(this)
+        if (lastCrash != null) {
+            // دفعهٔ قبل خطایی رخ داده؛ ابتدا متن آن نشان داده می‌شود تا قابل ارسال باشد
+            CrashReport.show(this, lastCrash) { recreate() }
+            return
+        }
         incomingLink.value = linkFrom(intent)
         WindowCompat.setDecorFitsSystemWindows(window, false)
         setContent {

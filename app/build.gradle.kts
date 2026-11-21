@@ -15,7 +15,7 @@ android {
         minSdk = 24
         targetSdk = 34
         // در GitHub Actions با هر بیلد خودکار بالا می‌رود تا نسخهٔ جدید روی قبلی نصب شود
-        versionCode = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1
+        versionCode = (System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1) + 1000
         versionName = "2.0"
     }
 
