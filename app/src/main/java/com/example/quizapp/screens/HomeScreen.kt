@@ -2,6 +2,7 @@ package com.example.quizapp.screens
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -57,10 +58,6 @@ fun HomeScreen(
 ) {
     // کتاب‌های بدون آزمون به دانش‌آموز نشان داده نمی‌شوند
     val visibleBooks = books.filter { it.exams.isNotEmpty() }
-    val hasQuery = query.isNotBlank()
-    val hits = remember(books, query) {
-        if (hasQuery) ExamSearch.search(visibleBooks, query) else emptyList()
-    }
 
     Column(
         modifier = Modifier
@@ -72,8 +69,27 @@ fun HomeScreen(
 
         if (visibleBooks.isEmpty()) {
             EmptyHome(onGoImport = onGoImport, onGoTeacher = onGoTeacher)
-            return@Column
+        } else {
+            HomeContent(visibleBooks, query, onQueryChange, resume, onResume, onOpenBook, onOpenExam)
         }
+    }
+}
+
+
+@Composable
+private fun ColumnScope.HomeContent(
+    visibleBooks: List<Book>,
+    query: String,
+    onQueryChange: (String) -> Unit,
+    resume: Pair<SavedSession, Exam>?,
+    onResume: (SavedSession, Exam) -> Unit,
+    onOpenBook: (String) -> Unit,
+    onOpenExam: (String, Exam) -> Unit
+) {
+    val hasQuery = query.isNotBlank()
+    val hits = remember(visibleBooks, query) {
+        if (hasQuery) ExamSearch.search(visibleBooks, query) else emptyList()
+    }
 
         val clearIcon: (@Composable () -> Unit)? = if (hasQuery) {
             { TextButton(onClick = { onQueryChange("") }) { Text("✕") } }
@@ -122,9 +138,7 @@ fun HomeScreen(
                     }
                 }
             }
-            return@Column
-        }
-
+        } else {
         LazyColumn(
             modifier = Modifier.weight(1f).fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -149,7 +163,7 @@ fun HomeScreen(
                 }
             }
         }
-    }
+        }
 }
 
 @Composable
