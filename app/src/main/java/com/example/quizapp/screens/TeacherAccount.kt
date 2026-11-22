@@ -72,21 +72,13 @@ fun TeacherAccountCard(onChanged: (Account?) -> Unit = {}) {
         }
     }
 
+    if (OnlineApi.configured) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
-            if (!OnlineApi.configured) {
-                Text("🌐 اتصال آنلاین", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    "ارسال آنلاین آزمون و نتیجهٔ زنده هنوز تنظیم نشده است. (راهنما: فایل ONLINE-SETUP.md). بقیهٔ برنامه بدون آن کار می‌کند.",
-                    color = Color.Gray,
-                    fontSize = 13.sp,
-                    lineHeight = 20.sp
-                )
-            } else {
+            if (OnlineApi.configured) {
                 val acc = account
                 if (acc != null) {
                     Text("👤 حساب معلم", fontWeight = FontWeight.Bold, fontSize = 16.sp)
@@ -149,5 +141,6 @@ fun TeacherAccountCard(onChanged: (Account?) -> Unit = {}) {
                 }
             }
         }
+    }
     }
 }

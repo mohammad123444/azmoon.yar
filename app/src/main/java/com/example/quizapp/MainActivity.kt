@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.fillMaxSize
@@ -245,44 +246,51 @@ private fun screenSaver(booksProvider: () -> List<Book>): Saver<Screen, ArrayLis
 )
 
 @Composable
-private fun AppHeader() {
+private fun AppHeader(onSettings: () -> Unit) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.Center,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Image(
-            painter = painterResource(id = R.drawable.ic_app_logo),
-            contentDescription = null,
-            modifier = Modifier.size(32.dp)
-        )
-        Spacer(Modifier.width(8.dp))
-        Text("آزمون‌یار", style = MaterialTheme.typography.titleLarge)
+        Spacer(Modifier.width(48.dp))
+        Row(
+            modifier = Modifier.weight(1f),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Image(
+                painter = painterResource(id = R.drawable.ic_app_logo),
+                contentDescription = null,
+                modifier = Modifier.size(32.dp)
+            )
+            Spacer(Modifier.width(8.dp))
+            Text("آزمون‌یار", style = MaterialTheme.typography.titleLarge)
+        }
+        TextButton(onClick = onSettings, modifier = Modifier.width(48.dp), contentPadding = PaddingValues(0.dp)) {
+            Text("⚙️", fontSize = 22.sp)
+        }
     }
 }
 
-/** چهار تب پایین صفحه: معلم، دانش‌آموز (صفحهٔ اصلی)، دریافت آزمون، تنظیمات */
+/** سه تب پایین صفحه: آزمون‌ها (دانش‌آموز)، دریافت آزمون، معلم. تنظیمات با ⚙️ بالای صفحه است. */
 @Composable
 private fun BottomTabs(screen: Screen, onGo: (Screen) -> Unit) {
     NavigationBar(windowInsets = WindowInsets(0.dp, 0.dp, 0.dp, 0.dp)) {
         val tabs = listOf(
-            Triple("👨‍🏫", "معلم", Screen.Teacher as Screen),
-            Triple("🎓", "دانش‌آموز", Screen.Home as Screen),
+            Triple("🎓", "آزمون‌ها", Screen.Home as Screen),
             Triple("📥", "دریافت آزمون", Screen.Import() as Screen),
-            Triple("⚙️", "تنظیمات", Screen.Settings as Screen)
+            Triple("👨‍🏫", "معلم", Screen.Teacher as Screen)
         )
         tabs.forEach { (icon, label, target) ->
             val selected = when (target) {
                 is Screen.Home -> screen is Screen.Home
                 is Screen.Teacher -> screen is Screen.Teacher
-                is Screen.Import -> screen is Screen.Import
-                else -> screen is Screen.Settings
+                else -> screen is Screen.Import
             }
             NavigationBarItem(
                 selected = selected,
                 onClick = { if (!selected) onGo(target) },
-                icon = { Text(icon) },
-                label = { Text(label, maxLines = 1, fontSize = 11.sp, overflow = TextOverflow.Ellipsis) },
+                icon = { Text(icon, fontSize = 20.sp) },
+                label = { Text(label, maxLines = 1, fontSize = 12.sp, overflow = TextOverflow.Ellipsis) },
                 alwaysShowLabel = true
             )
         }
@@ -462,7 +470,7 @@ fun AppRoot(
 
     Surface(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize().systemBarsPadding()) {
-            if (showChrome && !keyboardOpen) AppHeader()
+            if (showChrome && !keyboardOpen) AppHeader(onSettings = { screen = Screen.Settings })
             Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                 when (val s = screen) {
                     is Screen.Home -> HomeScreen(

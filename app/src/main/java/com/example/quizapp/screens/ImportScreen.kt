@@ -24,6 +24,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -85,6 +86,7 @@ fun ImportScreen(
     var showText by remember(initialText) { mutableStateOf(initialText.isNotBlank()) }
     var text by remember(initialText) { mutableStateOf(initialText) }
     var onlineCode by remember { mutableStateOf("") }
+    var showMore by remember(initialText) { mutableStateOf(initialText.isNotBlank() && !initialText.startsWith("azmoon://exam?c=")) }
     var onlineMsg by remember { mutableStateOf<String?>(null) }
     var onlineBusy by remember { mutableStateOf(false) }
 
@@ -191,7 +193,7 @@ fun ImportScreen(
     ) {
         Text("📥 دریافت آزمون", style = MaterialTheme.typography.headlineSmall)
         Spacer(Modifier.height(4.dp))
-        Text("چه چیزی دارید؟ یکی را انتخاب کنید.", color = Color.Gray, fontSize = 14.sp)
+        Text("کد یا فایلی که معلم فرستاده را وارد کنید.", color = Color.Gray, fontSize = 14.sp)
         Spacer(Modifier.height(12.dp))
 
         val info = inspection
@@ -253,6 +255,10 @@ fun ImportScreen(
         )
         Spacer(Modifier.height(10.dp))
 
+        TextButton(onClick = { showMore = !showMore }) {
+            Text(if (showMore) "▲ پنهان کردن" else "▼ راه‌های دیگر (PDF، متن، پشتیبان، جست‌وجو)")
+        }
+        if (showMore) {
         RouteCard(
             title = "📄 فایل PDF",
             desc = "PDF سوال‌ها را انتخاب کنید و صفحه‌ها را به آزمون تبدیل کنید.",
@@ -290,6 +296,7 @@ fun ImportScreen(
             primary = false,
             onClick = onOpenSearch
         )
+        }
         Spacer(Modifier.height(16.dp))
     }
 }

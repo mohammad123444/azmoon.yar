@@ -17,7 +17,10 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.TextButton
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -52,6 +55,8 @@ fun TeacherChapterScreen(
     var shareTarget by remember { mutableStateOf<Exam?>(null) }
     var deleteTarget by remember { mutableStateOf<Exam?>(null) }
     var moveTarget by remember { mutableStateOf<Exam?>(null) }
+    var showOtherNew by remember { mutableStateOf(false) }
+    var moreFor by remember { mutableStateOf<String?>(null) }
     val context = LocalContext.current
 
     Column(
@@ -70,68 +75,83 @@ fun TeacherChapterScreen(
 
         Button(
             onClick = { onEditTest(null) },
-            modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
+            modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp),
             colors = ButtonDefaults.buttonColors(
                 containerColor = GreenPrimary,
                 contentColor = Color.White
             )
         ) {
-            Text("📝 آزمون تستی زمان‌دار (برای ارسال به دانش‌آموز)", fontSize = 16.sp)
+            Text("📝 ساخت آزمون تستی", fontSize = 17.sp)
         }
-        Spacer(Modifier.height(10.dp))
-        OutlinedButton(
-            onClick = { onEdit(null) },
-            modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)
-        ) {
-            Text("➕ آزمون جدید (سوال و پاسخ متنی)", fontSize = 16.sp)
+        TextButton(onClick = { showOtherNew = !showOtherNew }) {
+            Text(if (showOtherNew) "▲ پنهان" else "▼ روش‌های دیگر ساخت آزمون")
         }
-        Spacer(Modifier.height(10.dp))
-        OutlinedButton(
-            onClick = { onEditFile(null) },
-            modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)
-        ) {
-            Text("📎 آزمون جدید از PDF یا عکس", fontSize = 16.sp)
+        if (showOtherNew) {
+            OutlinedButton(
+                onClick = { onEdit(null) },
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
+            ) { Text("➕ آزمون متنی (سوال و پاسخ)", fontSize = 15.sp) }
+            Spacer(Modifier.height(6.dp))
+            OutlinedButton(
+                onClick = { onEditFile(null) },
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
+            ) { Text("📎 آزمون از PDF یا عکس", fontSize = 15.sp) }
         }
-        Spacer(Modifier.height(20.dp))
+        Spacer(Modifier.height(16.dp))
 
         if (exams.isEmpty()) {
-            Text("هنوز آزمونی در این فصل نیست.", color = Color.Gray)
+            Text("هنوز آزمونی در این فصل نیست. با دکمهٔ بالا اولین آزمون را بسازید.", color = Color.Gray)
         }
         exams.forEach { exam ->
-            Column(modifier = Modifier.fillMaxWidth()) {
-                Text(examLabel(exam), fontSize = 16.sp)
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    TextButton(onClick = {
-                        if (exam.isFileExam) onEditFile(exam.key)
-                        else if (exam.isTest) onEditTest(exam.key)
-                        else onEdit(exam.key)
-                    }) { Text("✏️ ویرایش") }
-                    TextButton(onClick = { shareTarget = exam }) { Text("📤 ارسال به دانش‌آموز") }
-                    TextButton(onClick = { deleteTarget = exam }) { Text("🗑 حذف") }
-                }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    val pos = exams.indexOf(exam)
-                    TextButton(
-                        onClick = { onBooksChange(ExamStore.moveExam(books, bookName, exam.key, -1)) },
-                        enabled = pos > 0
-                    ) { Text("▲ بالا") }
-                    TextButton(
-                        onClick = { onBooksChange(ExamStore.moveExam(books, bookName, exam.key, 1)) },
-                        enabled = pos < exams.lastIndex
-                    ) { Text("▼ پایین") }
-                    TextButton(onClick = { moveTarget = exam }) { Text("📁 انتقال") }
-                    if (exam.isTest) {
-                        TextButton(onClick = { onResults(exam.key) }) { Text("📊 نتایج") }
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Text(examLabel(exam), fontSize = 16.sp)
+                    Spacer(Modifier.height(4.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        TextButton(onClick = {
+                            if (exam.isFileExam) onEditFile(exam.key)
+                            else if (exam.isTest) onEditTest(exam.key)
+                            else onEdit(exam.key)
+                        }) { Text("✏️ ویرایش") }
+                        if (exam.isTest) {
+                            TextButton(onClick = { onResults(exam.key) }) { Text("📤 ارسال و نتایج") }
+                        } else {
+                            TextButton(onClick = { shareTarget = exam }) { Text("📤 ارسال") }
+                        }
+                        TextButton(onClick = { moreFor = if (moreFor == exam.key) null else exam.key }) { Text("⋯ بیشتر") }
+                    }
+                    if (moreFor == exam.key) {
+                        val pos = exams.indexOf(exam)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            TextButton(
+                                onClick = { onBooksChange(ExamStore.moveExam(books, bookName, exam.key, -1)) },
+                                enabled = pos > 0
+                            ) { Text("▲") }
+                            TextButton(
+                                onClick = { onBooksChange(ExamStore.moveExam(books, bookName, exam.key, 1)) },
+                                enabled = pos < exams.lastIndex
+                            ) { Text("▼") }
+                            TextButton(onClick = { moveTarget = exam }) { Text("📁 انتقال") }
+                            if (exam.isTest) {
+                                TextButton(onClick = { shareTarget = exam }) { Text("📎 فایل") }
+                            }
+                            TextButton(onClick = { deleteTarget = exam }) { Text("🗑 حذف", color = Color(0xFFC62828)) }
+                        }
                     }
                 }
             }
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(10.dp))
         }
     }
 

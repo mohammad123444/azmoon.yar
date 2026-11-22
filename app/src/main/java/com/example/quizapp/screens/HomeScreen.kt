@@ -64,7 +64,7 @@ fun HomeScreen(
             .fillMaxSize()
             .padding(horizontal = 16.dp, vertical = 8.dp)
     ) {
-        Text("🎓 پنل دانش‌آموز", style = MaterialTheme.typography.headlineSmall)
+        Text("آزمون‌های من", style = MaterialTheme.typography.headlineSmall)
         Spacer(Modifier.height(8.dp))
 
         if (visibleBooks.isEmpty()) {

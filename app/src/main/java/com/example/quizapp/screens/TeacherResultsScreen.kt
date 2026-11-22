@@ -79,6 +79,7 @@ fun TeacherResultsScreen(
     var pasteMessage by remember { mutableStateOf<String?>(null) }
     var pasteOk by remember { mutableStateOf(true) }
     var deleteTarget by remember { mutableStateOf<StoredResult?>(null) }
+    var showManual by remember { mutableStateOf(!OnlineApi.configured) }
 
     val results = remember(tick, exam) {
         if (exam == null) emptyList()
@@ -122,7 +123,11 @@ fun TeacherResultsScreen(
         OnlineCard(bookName = bookName, exam = exam, onFetched = { tick++ })
         Spacer(Modifier.height(16.dp))
 
-        // ---- افزودن نتیجه ----
+        // ---- ورود دستی نتیجه (راه پشتیبان، وقتی نتیجه با پیام‌رسان رسیده) ----
+        TextButton(onClick = { showManual = !showManual }) {
+            Text(if (showManual) "▲ پنهان کردن" else "▼ ورود دستی نتیجه (نتیجه‌ای که با پیام رسیده)")
+        }
+        if (showManual) {
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
@@ -199,6 +204,9 @@ fun TeacherResultsScreen(
             }
         }
         Spacer(Modifier.height(16.dp))
+
+        }
+        Spacer(Modifier.height(8.dp))
 
         if (results.isNotEmpty()) {
             OutlinedButton(
