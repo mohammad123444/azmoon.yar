@@ -81,5 +81,10 @@ fun main(args: Array<String>) {
     AiQuestions.clearLegacyConfig(c)
     check("legacy key cleared", c.getSharedPreferences("ai_config", 0).getString("key", "").orEmpty().isEmpty())
     check("defaults", AiConfig("k").model == "gemini-flash-latest" && AiConfig("k").baseUrl.contains("generativelanguage"))
+    val pp = AiQuestions.planPdf(1, 300, 40)
+    check("planPdf sums", pp.sumOf { it.third } == 40 && pp.size == 3 && pp.first().first == 1 && pp.last().second == 300)
+    check("planPdf contiguous", pp.zipWithNext().all { (x, y) -> y.first == x.second + 1 })
+    check("planPdf few pages", AiQuestions.planPdf(5, 6, 30).size == 2 && AiQuestions.planPdf(5, 4, 3).isEmpty() && AiQuestions.planPdf(1, 10, 0).isEmpty())
+    check("pdf body", AiQuestions.pdfRequestBody("https://x/files/a", 5, 10, 20).let { it.contains("fileUri") && it.contains("10") && it.contains("application/pdf") })
     println("passed=$passes failed=$failures"); if (failures > 0) System.exit(1)
 }

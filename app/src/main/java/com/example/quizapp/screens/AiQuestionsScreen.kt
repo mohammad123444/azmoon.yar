@@ -1,6 +1,8 @@
 package com.example.quizapp.screens
 
+import android.graphics.pdf.PdfRenderer
 import android.net.Uri
+import android.os.ParcelFileDescriptor
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -49,6 +51,7 @@ import com.example.quizapp.Book
 import com.example.quizapp.Exam
 import com.example.quizapp.ExamSearch
 import com.example.quizapp.ExamStore
+import com.example.quizapp.GeminiFile
 import com.example.quizapp.OnlineException
 import com.example.quizapp.Question
 import com.example.quizapp.ui.theme.GreenDark
@@ -59,6 +62,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 
 private val AiRed = Color(0xFFC62828)
 
@@ -89,6 +93,47 @@ fun AiQuestionsScreen(
     var job by remember { mutableStateOf<Job?>(null) }
     var round by remember { mutableIntStateOf(0) }
     val generated = remember { mutableStateListOf<Question>() }
+    var pdfFile by remember { mutableStateOf<File?>(null) }
+    var pdfPages by remember { mutableIntStateOf(0) }
+    var fromText by remember { mutableStateOf("1") }
+    var toText by remember { mutableStateOf("") }
+    var uploaded by remember { mutableStateOf<GeminiFile?>(null) }
+
+    val pdfPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+        if (uri != null) {
+            scope.launch {
+                val res: Pair<Int, String?> = withContext(Dispatchers.IO) {
+                    try {
+                        val dest = File(context.cacheDir, "ai_book.pdf")
+                        val ins = context.contentResolver.openInputStream(uri)
+                            ?: return@withContext 0 to "فایل خوانده نشد."
+                        val size = ins.use { i -> dest.outputStream().use { o -> i.copyTo(o) } }
+                        if (size > 150_000_000L) {
+                            dest.delete()
+                            return@withContext 0 to "فایل خیلی بزرگ است (حداکثر ۱۵۰ مگابایت)."
+                        }
+                        val pages = ParcelFileDescriptor.open(dest, ParcelFileDescriptor.MODE_READ_ONLY).use { pfd ->
+                            PdfRenderer(pfd).use { r -> r.pageCount }
+                        }
+                        if (pages <= 0) 0 to "این PDF صفحه‌ای ندارد." else pages to null
+                    } catch (e: Exception) {
+                        0 to "این PDF خوانده نشد (خراب یا رمزدار است)."
+                    }
+                }
+                if (res.second != null) {
+                    message = res.second
+                } else {
+                    pdfFile = File(context.cacheDir, "ai_book.pdf")
+                    pdfPages = res.first
+                    fromText = "1"
+                    toText = res.first.toString()
+                    uploaded = null
+                    source = ""
+                    message = null
+                }
+            }
+        }
+    }
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         if (uri != null) {
@@ -117,7 +162,11 @@ fun AiQuestionsScreen(
 
     val chunks = remember(source) { AiQuestions.splitText(source) }
     val count = countText.toIntOrNull()
-    val canGenerate = !busy && key.isNotBlank() && chunks.isNotEmpty() && count != null && count in 1..100
+    val pdfFrom = fromText.toIntOrNull()
+    val pdfTo = toText.toIntOrNull()
+    val pdfOk = pdfFile != null && pdfFrom != null && pdfTo != null && pdfFrom >= 1 && pdfTo >= pdfFrom && pdfTo <= pdfPages
+    val sourceOk = if (pdfFile != null) pdfOk else chunks.isNotEmpty()
+    val canGenerate = !busy && key.isNotBlank() && sourceOk && count != null && count in 1..100
 
     Column(
         modifier = Modifier
@@ -154,14 +203,68 @@ fun AiQuestionsScreen(
         Spacer(Modifier.height(12.dp))
 
         // ---- متن کتاب ----
-        Text("متن کتاب", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+        Text("منبع سوال‌ها", fontWeight = FontWeight.Bold, fontSize = 16.sp)
         Text(
-            "فایل متنی (.txt) انتخاب کنید یا متن را بچسبانید. اگر کتاب PDF است، متن آن را کپی کنید (خواندن مستقیم PDF هنوز پشتیبانی نمی‌شود).",
+            "کتاب PDF را انتخاب کنید (برای PDF اسکن‌شده هم کار می‌کند)، یا فایل متنی (.txt) بدهید، یا متن را بچسبانید.",
             color = Color.Gray,
             fontSize = 13.sp,
             lineHeight = 19.sp
         )
         Spacer(Modifier.height(6.dp))
+        OutlinedButton(
+            onClick = { pdfPicker.launch(arrayOf("application/pdf")) },
+            enabled = !busy,
+            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
+        ) { Text("📕 انتخاب کتاب PDF") }
+        Spacer(Modifier.height(6.dp))
+        if (pdfFile != null) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Text("✅ PDF انتخاب شد — $pdfPages صفحه", fontWeight = FontWeight.Bold)
+                    Text(
+                        "از کدام صفحه تا کدام صفحه سوال ساخته شود؟ (شمارهٔ صفحه مثل نمایشگر PDF). بازهٔ کوچک‌تر دقیق‌تر و سریع‌تر است.",
+                        fontSize = 13.sp,
+                        lineHeight = 19.sp,
+                        color = Color.Gray
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = fromText,
+                            onValueChange = { fromText = it.filter { ch -> ch.isDigit() }.take(5) },
+                            label = { Text("از صفحه") },
+                            singleLine = true,
+                            enabled = !busy,
+                            isError = !pdfOk,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier.weight(1f)
+                        )
+                        OutlinedTextField(
+                            value = toText,
+                            onValueChange = { toText = it.filter { ch -> ch.isDigit() }.take(5) },
+                            label = { Text("تا صفحه") },
+                            singleLine = true,
+                            enabled = !busy,
+                            isError = !pdfOk,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    TextButton(
+                        onClick = {
+                            pdfFile?.delete()
+                            pdfFile = null
+                            pdfPages = 0
+                            uploaded = null
+                        },
+                        enabled = !busy
+                    ) { Text("🗑 حذف PDF", color = AiRed) }
+                }
+            }
+        } else {
         OutlinedButton(
             onClick = { picker.launch(arrayOf("text/plain", "text/*")) },
             enabled = !busy,
@@ -171,13 +274,14 @@ fun AiQuestionsScreen(
         OutlinedTextField(
             value = source,
             onValueChange = { source = it },
-            label = { Text("متن کتاب") },
+            label = { Text("یا متن را اینجا بچسبانید") },
             minLines = 4,
             maxLines = 8,
             enabled = !busy,
             modifier = Modifier.fillMaxWidth()
         )
-        if (chunks.isNotEmpty()) {
+        }
+        if (pdfFile == null && chunks.isNotEmpty()) {
             val used = minOf(chunks.size, AiQuestions.MAX_CHUNKS, count ?: 1)
             Text(
                 "${source.length} نویسه • ${chunks.size} بخش" +
@@ -231,6 +335,8 @@ fun AiQuestionsScreen(
                 onClick = {
                     val cfg = AiConfig(key)
                     val plan = AiQuestions.plan(chunks.size, count ?: 0)
+                    val pdf = pdfFile
+                    val pdfPlan = if (pdf != null) AiQuestions.planPdf(pdfFrom ?: 1, pdfTo ?: 1, count ?: 0) else emptyList()
                     generated.clear()
                     message = null
                     round++
@@ -238,7 +344,40 @@ fun AiQuestionsScreen(
                     job = scope.launch {
                         var failed = 0
                         var lastError: String? = null
-                        for ((i, step) in plan.withIndex()) {
+                        if (pdf != null) {
+                            try {
+                                val upf: GeminiFile = uploaded ?: run {
+                                    progress = "بارگذاری کتاب برای هوش مصنوعی... (برای کتاب بزرگ چند دقیقه طول می‌کشد)"
+                                    withContext(Dispatchers.IO) { AiQuestions.uploadFile(cfg, pdf, "application/pdf") }
+                                }.also { uploaded = it }
+                                for ((i, b) in pdfPlan.withIndex()) {
+                                    if (!isActive) break
+                                    progress = "ساخت سوال... مرحله ${i + 1} از ${pdfPlan.size} (${generated.size} سوال تا الان)"
+                                    try {
+                                        val qs = withContext(Dispatchers.IO) {
+                                            AiQuestions.generateFromPdf(cfg, upf, b.third, b.first, b.second)
+                                        }
+                                        val seen = generated.map { it.q.trim() }.toHashSet()
+                                        generated.addAll(qs.filter { seen.add(it.q.trim()) })
+                                    } catch (e: OnlineException) {
+                                        failed++
+                                        lastError = e.userMessage
+                                        if (e.userMessage.contains("کلید") || e.userMessage.contains("اعتبار") || e.userMessage.contains("نام مدل")) break
+                                    } catch (e: Exception) {
+                                        failed++
+                                        lastError = "خطای نامشخص"
+                                    }
+                                }
+                            } catch (e: OnlineException) {
+                                uploaded = null
+                                failed++
+                                lastError = e.userMessage
+                            } catch (e: Exception) {
+                                uploaded = null
+                                failed++
+                                lastError = "خطای نامشخص"
+                            }
+                        } else for ((i, step) in plan.withIndex()) {
                             if (!isActive) break
                             progress = "ساخت سوال... بخش ${i + 1} از ${plan.size} (${generated.size} سوال تا الان)"
                             try {
@@ -270,7 +409,8 @@ fun AiQuestionsScreen(
             if (!canGenerate && !busy) {
                 Text(
                     if (key.isBlank()) "کلید Gemini در این نسخهٔ برنامه تنظیم نشده است."
-                    else if (chunks.isEmpty()) "متن کتاب را وارد کنید."
+                    else if (pdfFile != null && !pdfOk) "بازهٔ صفحه‌ها را درست بنویسید (از ۱ تا $pdfPages)."
+                    else if (chunks.isEmpty() && pdfFile == null) "PDF کتاب را انتخاب کنید یا متن را وارد کنید."
                     else "تعداد سوال را بین ۱ تا ۱۰۰ بنویسید.",
                     color = Color.Gray,
                     fontSize = 12.sp
