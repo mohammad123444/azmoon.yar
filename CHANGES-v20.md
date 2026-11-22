@@ -63,3 +63,9 @@
 - AiQuestions.kt + screens/AiQuestionsScreen.kt: پنل معلم ← فصل ← «🤖 ساخت سوال از متن کتاب». کلید API (پیش‌فرض DeepSeek؛ آدرس و مدل قابل تغییر برای هر سرویس سازگار با OpenAI)، متن از فایل .txt یا چسباندن، تقسیم به بخش‌ها، مرور سوال‌ها، ذخیره به‌عنوان آزمون تستی.
 - جای گزینهٔ درست تصادفی می‌شود؛ سوال با ۴ گزینهٔ متفاوت و پاسخ نامعتبر حذف می‌شود.
 - تست JVM با سرور ساختگی (T23): ۲۳ بررسی. با DeepSeek واقعی آزمایش نشده. خواندن مستقیم PDF پشتیبانی نمی‌شود.
+
+## نسخهٔ ۲.۱ — تغییر سرویس هوش مصنوعی به Gemini
+- `AiQuestions.kt`: به‌جای DeepSeek/OpenAI، API بومی Gemini (`generateContent`، مدل `gemini-flash-latest`، خروجی JSON). تلاش دوباره روی ۴۲۹/۵۰۳. کلید/تنظیمات قدیمی DeepSeek روی گوشی پاک می‌شود.
+- `screens/AiQuestionsScreen.kt`: بخش «تنظیمات سرویس» (کلید، آدرس، مدل) حذف شد؛ کلید از `BuildConfig.GEMINI_API_KEY` خوانده می‌شود و نمایش داده نمی‌شود.
+- `app/build.gradle.kts` و `.github/workflows/build-apk.yml`: کلید از Secret `GEMINI_API_KEY` (یا `local.properties`) هنگام بیلد تزریق می‌شود. راهنما: `GEMINI-SETUP.md`.
+- `tools/jvm-tests/T23.kt` به Gemini به‌روز شد (اجرا نشده: کامپایلر Kotlin در محیط من نبود). با Gemini واقعی هم آزمایش نشده است.

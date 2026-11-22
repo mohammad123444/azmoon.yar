@@ -40,11 +40,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.quizapp.AiConfig
 import com.example.quizapp.AiQuestions
+import com.example.quizapp.BuildConfig
 import com.example.quizapp.Book
 import com.example.quizapp.Exam
 import com.example.quizapp.ExamSearch
@@ -63,7 +63,7 @@ import kotlinx.coroutines.withContext
 private val AiRed = Color(0xFFC62828)
 
 /**
- * ساخت سوال تستی از متن کتاب با هوش مصنوعی (DeepSeek یا هر سرویس سازگار با OpenAI).
+ * ساخت سوال تستی از متن کتاب با هوش مصنوعی (Gemini). کلید داخل برنامه است و جایی نشان داده نمی‌شود.
  * متن را بچسبانید یا فایل .txt بدهید؛ سوال‌ها ساخته می‌شوند، شما مرور می‌کنید و به‌عنوان آزمون ذخیره می‌شود.
  */
 @Composable
@@ -77,11 +77,8 @@ fun AiQuestionsScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val saved = remember { AiQuestions.loadConfig(context) }
-    var key by remember { mutableStateOf(saved.key) }
-    var base by remember { mutableStateOf(saved.baseUrl) }
-    var model by remember { mutableStateOf(saved.model) }
-    var showService by remember { mutableStateOf(saved.key.isBlank()) }
+    val key = BuildConfig.GEMINI_API_KEY
+    remember { AiQuestions.clearLegacyConfig(context) }
     var source by remember { mutableStateOf("") }
     var countText by remember { mutableStateOf("10") }
     var title by remember { mutableStateOf("") }
@@ -134,55 +131,26 @@ fun AiQuestionsScreen(
         Text("🤖 ساخت سوال با هوش مصنوعی", style = MaterialTheme.typography.headlineSmall)
         Spacer(Modifier.height(6.dp))
         Text(
-            "۱) کلید API   ۲) متن کتاب   ۳) تعداد سوال   ۴) مرور و ذخیره",
+            "۱) متن کتاب   ۲) تعداد سوال   ۳) مرور و ذخیره",
             color = Color.Gray,
             fontSize = 13.sp
         )
         Spacer(Modifier.height(12.dp))
 
-        // ---- سرویس ----
-        TextButton(onClick = { showService = !showService }) {
-            Text(if (showService) "▲ تنظیمات سرویس" else "▼ تنظیمات سرویس" + if (key.isNotBlank()) " (کلید ذخیره شده)" else "")
+        if (key.isBlank()) {
+            Text(
+                "❌ کلید Gemini هنگام ساخت برنامه تنظیم نشده است. (راهنما: GEMINI-SETUP.md)",
+                color = AiRed,
+                fontSize = 13.sp,
+                lineHeight = 20.sp
+            )
+            Spacer(Modifier.height(8.dp))
         }
-        if (showService) {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-            ) {
-                Column(modifier = Modifier.padding(12.dp)) {
-                    Text(
-                        "کلید API را از platform.deepseek.com بگیرید. این سرویس رایگان نیست ولی بسیار ارزان است (اعتبار کمی لازم است). کلید فقط روی همین گوشی می‌ماند و متنی که می‌فرستید به سرور آن سرویس می‌رود.",
-                        fontSize = 13.sp,
-                        lineHeight = 20.sp
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    OutlinedTextField(
-                        value = key,
-                        onValueChange = { key = it.trim() },
-                        label = { Text("کلید API") },
-                        singleLine = true,
-                        visualTransformation = PasswordVisualTransformation(),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Spacer(Modifier.height(6.dp))
-                    OutlinedTextField(
-                        value = base,
-                        onValueChange = { base = it.trim() },
-                        label = { Text("آدرس سرویس") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Spacer(Modifier.height(6.dp))
-                    OutlinedTextField(
-                        value = model,
-                        onValueChange = { model = it.trim() },
-                        label = { Text("نام مدل") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-            }
-        }
+        Text(
+            "متنی که می‌فرستید برای ساخت سوال به سرور Google (Gemini) می‌رود.",
+            color = Color.Gray,
+            fontSize = 12.sp
+        )
         Spacer(Modifier.height(12.dp))
 
         // ---- متن کتاب ----
@@ -261,8 +229,7 @@ fun AiQuestionsScreen(
         } else {
             Button(
                 onClick = {
-                    AiQuestions.saveConfig(context, AiConfig(key, base, model))
-                    val cfg = AiConfig(key, base.ifBlank { AiQuestions.DEFAULT_BASE }, model.ifBlank { AiQuestions.DEFAULT_MODEL })
+                    val cfg = AiConfig(key)
                     val plan = AiQuestions.plan(chunks.size, count ?: 0)
                     generated.clear()
                     message = null
@@ -280,8 +247,8 @@ fun AiQuestionsScreen(
                             } catch (e: OnlineException) {
                                 failed++
                                 lastError = e.userMessage
-                                // خطای کلید/اعتبار را ادامه دادن فایده ندارد
-                                if (e.userMessage.contains("کلید") || e.userMessage.contains("اعتبار")) break
+                                // خطای کلید/اعتبار/نام مدل را ادامه دادن فایده ندارد
+                                if (e.userMessage.contains("کلید") || e.userMessage.contains("اعتبار") || e.userMessage.contains("نام مدل")) break
                             } catch (e: Exception) {
                                 failed++
                                 lastError = "خطای نامشخص"
@@ -302,7 +269,7 @@ fun AiQuestionsScreen(
             ) { Text("✨ ساخت سوال", fontSize = 18.sp) }
             if (!canGenerate && !busy) {
                 Text(
-                    if (key.isBlank()) "ابتدا کلید API را در «تنظیمات سرویس» بنویسید."
+                    if (key.isBlank()) "کلید Gemini در این نسخهٔ برنامه تنظیم نشده است."
                     else if (chunks.isEmpty()) "متن کتاب را وارد کنید."
                     else "تعداد سوال را بین ۱ تا ۱۰۰ بنویسید.",
                     color = Color.Gray,

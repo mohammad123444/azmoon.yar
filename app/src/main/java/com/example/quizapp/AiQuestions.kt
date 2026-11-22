@@ -7,31 +7,34 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.util.Random
 
-data class AiConfig(val key: String, val baseUrl: String, val model: String)
+data class AiConfig(
+    val key: String,
+    val model: String = AiQuestions.DEFAULT_MODEL,
+    val baseUrl: String = AiQuestions.DEFAULT_BASE
+)
 
 /**
- * ساخت سوال تستی از متن کتاب با هر سرویس سازگار با OpenAI (پیش‌فرض: DeepSeek).
- * کلید API را خود کاربر می‌دهد و فقط روی همین گوشی ذخیره می‌شود؛ متن کتاب برای ساخت سوال به سرور آن سرویس فرستاده می‌شود.
+ * ساخت سوال تستی از متن کتاب با Gemini (Google).
+ * کلید API داخل برنامه (هنگام بیلد، از BuildConfig) قرار می‌گیرد و هیچ‌جای رابط کاربری نشان داده نمی‌شود؛
+ * متن کتاب برای ساخت سوال به سرور Google فرستاده می‌شود.
  */
 object AiQuestions {
-    const val DEFAULT_BASE = "https://api.deepseek.com"
-    const val DEFAULT_MODEL = "deepseek-chat"
+    const val DEFAULT_BASE = "https://generativelanguage.googleapis.com/v1beta"
+    const val DEFAULT_MODEL = "gemini-flash-latest"
     const val CHUNK_CHARS = 6000
     const val MAX_CHUNKS = 40
-    private const val PREFS = "ai_config"
+    private const val OLD_PREFS = "ai_config"
 
-    fun loadConfig(context: Context): AiConfig {
-        val p = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        return AiConfig(
-            p.getString("key", "").orEmpty(),
-            p.getString("base", DEFAULT_BASE).orEmpty().ifBlank { DEFAULT_BASE },
-            p.getString("model", DEFAULT_MODEL).orEmpty().ifBlank { DEFAULT_MODEL }
-        )
-    }
-
-    fun saveConfig(context: Context, c: AiConfig) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .putString("key", c.key.trim()).putString("base", c.baseUrl.trim()).putString("model", c.model.trim()).apply()
+    /** کلید و تنظیمات سرویس قدیمی (DeepSeek) که کاربر قبلاً روی گوشی ذخیره کرده بود پاک می‌شود */
+    fun clearLegacyConfig(context: Context) {
+        try {
+            val p = context.getSharedPreferences(OLD_PREFS, Context.MODE_PRIVATE)
+            if (p.getString("key", "").orEmpty().isNotEmpty()) {
+                p.edit().remove("key").remove("base").remove("model").apply()
+            }
+        } catch (e: Exception) {
+            // مهم نیست
+        }
     }
 
     /** متن را به بخش‌های حدود CHUNK_CHARS نویسه‌ای (در مرز پاراگراف/جمله) می‌شکند */
@@ -76,14 +79,49 @@ object AiQuestions {
         }
     }
 
-    fun messages(chunk: String, n: Int): JSONArray {
-        val system = "تو یک معلم باتجربه هستی. فقط بر اساس «متن» داده‌شده سوال چهارگزینه‌ای بساز، نه از دانسته‌های بیرون. " +
+    fun systemPrompt(): String =
+        "تو یک معلم باتجربه هستی. فقط بر اساس «متن» داده‌شده سوال چهارگزینه‌ای بساز، نه از دانسته‌های بیرون. " +
             "سوال‌ها پاسخ روشن و یکتا داشته باشند و به زبان خودِ متن باشند. در هر سوال دقیقاً ۴ گزینهٔ متفاوت بنویس که فقط یکی درست است. " +
             "خروجی فقط یک آرایهٔ JSON باشد و هیچ متن دیگری ننویس. قالب: " +
             "[{\"q\":\"متن سوال\",\"o\":[\"گزینه ۱\",\"گزینه ۲\",\"گزینه ۳\",\"گزینه ۴\"],\"k\":0}] که k شمارهٔ گزینهٔ درست از ۰ تا ۳ است."
-        return JSONArray()
-            .put(JSONObject().put("role", "system").put("content", system))
-            .put(JSONObject().put("role", "user").put("content", "تعداد سوال: $n\n\nمتن:\n$chunk"))
+
+    fun userPrompt(chunk: String, n: Int): String = "تعداد سوال: $n\n\nمتن:\n$chunk"
+
+    /** بدنهٔ درخواست generateContent در Gemini */
+    fun requestBody(chunk: String, n: Int): String =
+        JSONObject()
+            .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", systemPrompt()))))
+            .put(
+                "contents",
+                JSONArray().put(
+                    JSONObject().put("role", "user")
+                        .put("parts", JSONArray().put(JSONObject().put("text", userPrompt(chunk, n))))
+                )
+            )
+            .put(
+                "generationConfig",
+                JSONObject().put("temperature", 0.3).put("maxOutputTokens", 8192).put("responseMimeType", "application/json")
+            )
+            .toString()
+
+    /** متن پاسخ را از ساختار پاسخ Gemini بیرون می‌کشد (بخش‌های «thought» نادیده گرفته می‌شود) */
+    fun extractText(response: String): String {
+        val root = JSONObject(response)
+        val block = root.optJSONObject("promptFeedback")?.optString("blockReason", "").orEmpty()
+        val cands = root.optJSONArray("candidates")
+        if (cands == null || cands.length() == 0) {
+            if (block.isNotEmpty()) throw OnlineException("سرویس این متن را رد کرد؛ متن دیگری امتحان کنید.")
+            throw OnlineException("پاسخ سرویس نامعتبر بود.")
+        }
+        val parts = cands.getJSONObject(0).optJSONObject("content")?.optJSONArray("parts")
+            ?: throw OnlineException("پاسخ سرویس خالی بود؛ دوباره امتحان کنید.")
+        val sb = StringBuilder()
+        for (i in 0 until parts.length()) {
+            val part = parts.optJSONObject(i) ?: continue
+            if (part.optBoolean("thought", false)) continue
+            sb.append(part.optString("text", ""))
+        }
+        return sb.toString()
     }
 
     /** پاسخ مدل را به سوال تبدیل می‌کند؛ موردهای ناقص یا نامعتبر کنار گذاشته می‌شوند. جای گزینهٔ درست تصادفی می‌شود. */
@@ -114,53 +152,80 @@ object AiQuestions {
         return out
     }
 
-    private fun httpMessage(status: Int): String = when (status) {
-        401 -> "کلید API درست نیست یا منقضی شده."
-        402 -> "اعتبار حساب این سرویس تمام شده است."
-        429 -> "تعداد درخواست‌ها زیاد است؛ چند دقیقه بعد امتحان کنید."
-        404 -> "آدرس یا نام مدل درست نیست."
+    private fun httpMessage(status: Int, errBody: String): String = when {
+        status == 400 && errBody.contains("API key", ignoreCase = true) -> "کلید داخلی برنامه درست نیست."
+        status == 401 || status == 403 -> "کلید داخلی برنامه کار نمی‌کند یا دسترسی ندارد."
+        status == 429 -> "تعداد درخواست‌ها زیاد است؛ چند دقیقه بعد امتحان کنید."
+        status == 404 -> "نام مدل درست نیست."
+        status == 503 -> "سرویس شلوغ است؛ کمی بعد امتحان کنید."
         else -> "سرویس خطا داد ($status)."
     }
 
-    /** برای یک بخش از متن، سوال می‌سازد (مسدودکننده) */
-    fun generate(cfg: AiConfig, chunk: String, n: Int, random: Random = Random()): List<Question> {
-        if (cfg.key.isBlank()) throw OnlineException("کلید API را بنویسید.")
-        val body = JSONObject()
-            .put("model", cfg.model)
-            .put("messages", messages(chunk, n))
-            .put("temperature", 0.3)
-            .put("max_tokens", 3500)
-            .put("stream", false)
-            .toString()
-        val conn = try {
-            URL(cfg.baseUrl.trim().trimEnd('/') + "/chat/completions").openConnection() as HttpURLConnection
-        } catch (e: Exception) {
-            throw OnlineException("آدرس سرویس درست نیست.")
+    /** برای یک بخش از متن، سوال می‌سازد (مسدودکننده). روی خطای شلوغی (۴۲۹/۵۰۳) چند بار با فاصله دوباره تلاش می‌کند. */
+    fun generate(
+        cfg: AiConfig,
+        chunk: String,
+        n: Int,
+        random: Random = Random(),
+        retries: Int = 2,
+        retryDelayMs: Long = 15000
+    ): List<Question> {
+        if (cfg.key.isBlank()) throw OnlineException("کلید داخلی برنامه تنظیم نشده است.")
+        val body = requestBody(chunk, n)
+        val endpoint = cfg.baseUrl.trim().trimEnd('/') + "/models/" + cfg.model.trim() + ":generateContent"
+        var attempt = 0
+        while (true) {
+            val conn = try {
+                URL(endpoint).openConnection() as HttpURLConnection
+            } catch (e: Exception) {
+                throw OnlineException("آدرس سرویس درست نیست.")
+            }
+            var text: String? = null
+            var status = 0
+            var errBody = ""
+            try {
+                conn.requestMethod = "POST"
+                conn.connectTimeout = 20000
+                conn.readTimeout = 120000
+                conn.doOutput = true
+                conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                conn.setRequestProperty("x-goog-api-key", cfg.key.trim())
+                conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
+                status = conn.responseCode
+                if (status in 200..299) {
+                    text = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+                } else {
+                    errBody = try {
+                        conn.errorStream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
+                    } catch (e: Exception) {
+                        ""
+                    }
+                }
+            } catch (e: Exception) {
+                throw OnlineException("اتصال به اینترنت یا سرویس برقرار نشد.")
+            } finally {
+                conn.disconnect()
+            }
+            if (text != null) {
+                val content = try {
+                    extractText(text)
+                } catch (e: OnlineException) {
+                    throw e
+                } catch (e: Exception) {
+                    throw OnlineException("پاسخ سرویس نامعتبر بود.")
+                }
+                return parse(content, random)
+            }
+            if ((status == 429 || status == 503) && attempt < retries) {
+                attempt++
+                try {
+                    Thread.sleep(retryDelayMs)
+                } catch (e: InterruptedException) {
+                    throw OnlineException("متوقف شد.")
+                }
+                continue
+            }
+            throw OnlineException(httpMessage(status, errBody))
         }
-        val text: String
-        try {
-            conn.requestMethod = "POST"
-            conn.connectTimeout = 20000
-            conn.readTimeout = 120000
-            conn.doOutput = true
-            conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
-            conn.setRequestProperty("Authorization", "Bearer " + cfg.key.trim())
-            conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
-            val code = conn.responseCode
-            if (code !in 200..299) throw OnlineException(httpMessage(code))
-            text = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-        } catch (e: OnlineException) {
-            throw e
-        } catch (e: Exception) {
-            throw OnlineException("اتصال به اینترنت یا سرویس برقرار نشد.")
-        } finally {
-            conn.disconnect()
-        }
-        val content = try {
-            JSONObject(text).getJSONArray("choices").getJSONObject(0).getJSONObject("message").getString("content")
-        } catch (e: Exception) {
-            throw OnlineException("پاسخ سرویس نامعتبر بود.")
-        }
-        return parse(content, random)
     }
 }

@@ -1,10 +1,19 @@
 import java.io.InputStream
 import java.net.URL
+import java.util.Properties
 
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
 }
+
+// کلید Gemini: از متغیر محیطی GEMINI_API_KEY (در GitHub: Secret هم‌نام) یا از فایل local.properties خوانده می‌شود.
+// کلید داخل کد منبع/مخزن نوشته نمی‌شود؛ فقط هنگام بیلد داخل BuildConfig می‌رود.
+val geminiKey: String = (System.getenv("GEMINI_API_KEY")?.takeIf { it.isNotBlank() }
+    ?: rootProject.file("local.properties").takeIf { it.exists() }?.let { f ->
+        Properties().also { p -> f.inputStream().use { p.load(it) } }.getProperty("GEMINI_API_KEY")
+    }
+    ?: "").trim().replace("\\", "").replace("\"", "")
 
 android {
     namespace = "com.example.quizapp"
@@ -16,7 +25,8 @@ android {
         targetSdk = 34
         // در GitHub Actions با هر بیلد خودکار بالا می‌رود تا نسخهٔ جدید روی قبلی نصب شود
         versionCode = (System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1) + 1000
-        versionName = "2.0"
+        versionName = "2.1"
+        buildConfigField("String", "GEMINI_API_KEY", "\"$geminiKey\"")
     }
 
     // امضای ثابت: بدون آن، هر بیلد با کلید متفاوت امضا می‌شود و به‌روزرسانی ممکن نیست
@@ -45,6 +55,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.10"

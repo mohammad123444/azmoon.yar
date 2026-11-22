@@ -36,38 +36,50 @@ fun main(args: Array<String>) {
     check("shuffle varies position", positions.size >= 3)
     check("parse garbage", AiQuestions.parse("نمی‌دانم").isEmpty() && AiQuestions.parse("[ not json").isEmpty())
 
-    var lastAuth = ""; var lastBody = ""; var mode = 0
+    var lastAuth = ""; var lastPath = ""; var lastBody = ""; var mode = 0
     val srv = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
     srv.createContext("/") { ex ->
-        lastAuth = ex.requestHeaders.getFirst("Authorization").orEmpty()
+        lastAuth = ex.requestHeaders.getFirst("x-goog-api-key").orEmpty()
+        lastPath = ex.requestURI.path
         lastBody = ex.requestBody.readBytes().toString(Charsets.UTF_8)
         val (code, resp) = when (mode) {
-            0 -> 200 to JSONObject().put("choices", org.json.JSONArray().put(JSONObject().put("message", JSONObject().put("content", good)))).toString()
-            1 -> 401 to "{}"
-            2 -> 402 to "{}"
+            0 -> 200 to JSONObject().put("candidates", org.json.JSONArray().put(JSONObject().put("content", JSONObject().put("parts",
+                org.json.JSONArray().put(JSONObject().put("text", "فکر").put("thought", true)).put(JSONObject().put("text", good)))))).toString()
+            1 -> 403 to "{}"
+            2 -> 400 to "{\"error\":{\"message\":\"API key not valid\"}}"
+            4 -> 429 to "{}"
+            5 -> 200 to "{\"promptFeedback\":{\"blockReason\":\"SAFETY\"}}"
             else -> 200 to "{\"x\":1}"
         }
         val b = resp.toByteArray(Charsets.UTF_8); ex.sendResponseHeaders(code, b.size.toLong()); ex.responseBody.use { it.write(b) }
     }
     srv.start()
-    val cfg = AiConfig("sk-test", "http://127.0.0.1:${srv.address.port}/", "deepseek-chat")
+    val cfg = AiConfig("gk-test", "gemini-flash-latest", "http://127.0.0.1:${srv.address.port}/v1beta/")
     val r = AiQuestions.generate(cfg, "متن درس", 3)
-    check("generate ok", r.size == 2)
-    check("auth header", lastAuth == "Bearer sk-test")
+    check("generate ok (thought part ignored)", r.size == 2)
+    check("key header", lastAuth == "gk-test")
+    check("path", lastPath == "/v1beta/models/gemini-flash-latest:generateContent")
     val sent = JSONObject(lastBody)
-    check("body model+text", sent.getString("model") == "deepseek-chat" && lastBody.contains("متن درس") && sent.getJSONArray("messages").length() == 2)
+    check("body system+text", lastBody.contains("متن درس") && sent.getJSONObject("systemInstruction").getJSONArray("parts").length() == 1 &&
+        sent.getJSONArray("contents").getJSONObject(0).getString("role") == "user" &&
+        sent.getJSONObject("generationConfig").getString("responseMimeType") == "application/json")
     mode = 1; var e: String? = null; try { AiQuestions.generate(cfg, "x", 1) } catch (x: OnlineException) { e = x.userMessage }
-    check("401 msg", e != null && e!!.contains("کلید"))
+    check("403 msg", e != null && e!!.contains("کلید"))
     mode = 2; e = null; try { AiQuestions.generate(cfg, "x", 1) } catch (x: OnlineException) { e = x.userMessage }
-    check("402 msg", e != null && e!!.contains("اعتبار"))
+    check("400 bad key msg", e != null && e!!.contains("کلید"))
+    mode = 4; e = null; try { AiQuestions.generate(cfg, "x", 1, retries = 1, retryDelayMs = 1) } catch (x: OnlineException) { e = x.userMessage }
+    check("429 after retry", e != null && e!!.contains("زیاد"))
+    mode = 5; e = null; try { AiQuestions.generate(cfg, "x", 1) } catch (x: OnlineException) { e = x.userMessage }
+    check("blocked prompt msg", e != null && e!!.contains("رد"))
     mode = 3; e = null; try { AiQuestions.generate(cfg, "x", 1) } catch (x: OnlineException) { e = x.userMessage }
     check("bad reply msg", e != null)
     e = null; try { AiQuestions.generate(cfg.copy(key = ""), "x", 1) } catch (x: OnlineException) { e = x.userMessage }
     check("no key", e != null)
     srv.stop(0)
     val c = TestCtx(tmpDir("t23"))
-    check("config default", AiQuestions.loadConfig(c).baseUrl == AiQuestions.DEFAULT_BASE)
-    AiQuestions.saveConfig(c, AiConfig(" k ", "http://x", "m"))
-    check("config roundtrip", AiQuestions.loadConfig(c) == AiConfig("k", "http://x", "m"))
+    c.getSharedPreferences("ai_config", 0).edit().putString("key", "old-deepseek").apply()
+    AiQuestions.clearLegacyConfig(c)
+    check("legacy key cleared", c.getSharedPreferences("ai_config", 0).getString("key", "").orEmpty().isEmpty())
+    check("defaults", AiConfig("k").model == "gemini-flash-latest" && AiConfig("k").baseUrl.contains("generativelanguage"))
     println("passed=$passes failed=$failures"); if (failures > 0) System.exit(1)
 }
