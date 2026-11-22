@@ -9,11 +9,20 @@ plugins {
 
 // کلید Gemini: از متغیر محیطی GEMINI_API_KEY (در GitHub: Secret هم‌نام) یا از فایل local.properties خوانده می‌شود.
 // کلید داخل کد منبع/مخزن نوشته نمی‌شود؛ فقط هنگام بیلد داخل BuildConfig می‌رود.
-val geminiKey: String = (System.getenv("GEMINI_API_KEY")?.takeIf { it.isNotBlank() }
+val geminiKeyRaw: String = (System.getenv("GEMINI_API_KEY")?.takeIf { it.isNotBlank() }
     ?: rootProject.file("local.properties").takeIf { it.exists() }?.let { f ->
         Properties().also { p -> f.inputStream().use { p.load(it) } }.getProperty("GEMINI_API_KEY")
     }
-    ?: "").trim().replace("\\", "").replace("\"", "")
+    ?: "").trim()
+
+// اگر به‌جای فقط کلید، کل دستور curl را در Secret گذاشته باشند، کلید از داخل آن بیرون کشیده می‌شود
+val geminiKey: String = when {
+    geminiKeyRaw.isEmpty() -> ""
+    !geminiKeyRaw.any { it.isWhitespace() || it == '"' || it == '\'' || it == '\\' } -> geminiKeyRaw
+    else -> Regex("(?i)api-key:\\s*([A-Za-z0-9_.\\-]+)").find(geminiKeyRaw)?.groupValues?.get(1)
+        ?: Regex("AIza[A-Za-z0-9_\\-]{20,}|AQ\\.[A-Za-z0-9_.\\-]{20,}").find(geminiKeyRaw)?.value
+        ?: "".also { logger.warn("GEMINI_API_KEY خالی یا نامعتبر است؛ فقط خود کلید را بنویسید.") }
+}
 
 android {
     namespace = "com.example.quizapp"

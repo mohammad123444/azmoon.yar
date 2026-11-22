@@ -67,5 +67,5 @@
 ## نسخهٔ ۲.۱ — تغییر سرویس هوش مصنوعی به Gemini
 - `AiQuestions.kt`: به‌جای DeepSeek/OpenAI، API بومی Gemini (`generateContent`، مدل `gemini-flash-latest`، خروجی JSON). تلاش دوباره روی ۴۲۹/۵۰۳. کلید/تنظیمات قدیمی DeepSeek روی گوشی پاک می‌شود.
 - `screens/AiQuestionsScreen.kt`: بخش «تنظیمات سرویس» (کلید، آدرس، مدل) حذف شد؛ کلید از `BuildConfig.GEMINI_API_KEY` خوانده می‌شود و نمایش داده نمی‌شود.
-- `app/build.gradle.kts` و `.github/workflows/build-apk.yml`: کلید از Secret `GEMINI_API_KEY` (یا `local.properties`) هنگام بیلد تزریق می‌شود. راهنما: `GEMINI-SETUP.md`.
+- `app/build.gradle.kts` (اگر کل دستور curl هم در Secret باشد، کلید خودکار از آن بیرون کشیده می‌شود) و `.github/workflows/build-apk.yml`: کلید از Secret `GEMINI_API_KEY` (یا `local.properties`) هنگام بیلد تزریق می‌شود. راهنما: `GEMINI-SETUP.md`.
 - `tools/jvm-tests/T23.kt` به Gemini به‌روز شد (اجرا نشده: کامپایلر Kotlin در محیط من نبود). با Gemini واقعی هم آزمایش نشده است.
