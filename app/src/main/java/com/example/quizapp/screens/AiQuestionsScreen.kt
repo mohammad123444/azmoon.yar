@@ -1,0 +1,378 @@
+package com.example.quizapp.screens
+
+import android.net.Uri
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.example.quizapp.AiConfig
+import com.example.quizapp.AiQuestions
+import com.example.quizapp.Book
+import com.example.quizapp.Exam
+import com.example.quizapp.ExamSearch
+import com.example.quizapp.ExamStore
+import com.example.quizapp.OnlineException
+import com.example.quizapp.Question
+import com.example.quizapp.ui.theme.GreenDark
+import com.example.quizapp.ui.theme.GreenLight
+import com.example.quizapp.ui.theme.GreenPrimary
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+private val AiRed = Color(0xFFC62828)
+
+/**
+ * ساخت سوال تستی از متن کتاب با هوش مصنوعی (DeepSeek یا هر سرویس سازگار با OpenAI).
+ * متن را بچسبانید یا فایل .txt بدهید؛ سوال‌ها ساخته می‌شوند، شما مرور می‌کنید و به‌عنوان آزمون ذخیره می‌شود.
+ */
+@Composable
+fun AiQuestionsScreen(
+    books: List<Book>,
+    bookName: String,
+    chapter: String,
+    onBooksChange: (List<Book>) -> Unit,
+    onDone: () -> Unit,
+    onBack: () -> Unit
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val saved = remember { AiQuestions.loadConfig(context) }
+    var key by remember { mutableStateOf(saved.key) }
+    var base by remember { mutableStateOf(saved.baseUrl) }
+    var model by remember { mutableStateOf(saved.model) }
+    var showService by remember { mutableStateOf(saved.key.isBlank()) }
+    var source by remember { mutableStateOf("") }
+    var countText by remember { mutableStateOf("10") }
+    var title by remember { mutableStateOf("") }
+    var timeText by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    var progress by remember { mutableStateOf("") }
+    var message by remember { mutableStateOf<String?>(null) }
+    var job by remember { mutableStateOf<Job?>(null) }
+    var round by remember { mutableIntStateOf(0) }
+    val generated = remember { mutableStateListOf<Question>() }
+
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+        if (uri != null) {
+            scope.launch {
+                val text = withContext(Dispatchers.IO) {
+                    try {
+                        context.contentResolver.openInputStream(uri)?.use { ins ->
+                            val bytes = ins.readBytes()
+                            if (bytes.size > 8_000_000) null else String(bytes, Charsets.UTF_8).removePrefix("﻿")
+                        }
+                    } catch (e: Exception) {
+                        null
+                    }
+                }
+                if (text.isNullOrBlank()) {
+                    message = "فایل خوانده نشد یا خیلی بزرگ است (حداکثر ۸ مگابایت). فایل باید متنی (.txt) باشد."
+                } else if (text.count { it == '\u0000' } > 0) {
+                    message = "این فایل متنی نیست. برای PDF، متن را کپی کنید و در کادر بچسبانید."
+                } else {
+                    source = text
+                    message = null
+                }
+            }
+        }
+    }
+
+    val chunks = remember(source) { AiQuestions.splitText(source) }
+    val count = countText.toIntOrNull()
+    val canGenerate = !busy && key.isNotBlank() && chunks.isNotEmpty() && count != null && count in 1..100
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .imePadding()
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp)
+    ) {
+        TextButton(onClick = onBack) { Text("→ بازگشت") }
+        Text("کتاب: $bookName" + if (chapter.isBlank()) "" else " — فصل: $chapter", color = Color.Gray)
+        Text("🤖 ساخت سوال با هوش مصنوعی", style = MaterialTheme.typography.headlineSmall)
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "۱) کلید API   ۲) متن کتاب   ۳) تعداد سوال   ۴) مرور و ذخیره",
+            color = Color.Gray,
+            fontSize = 13.sp
+        )
+        Spacer(Modifier.height(12.dp))
+
+        // ---- سرویس ----
+        TextButton(onClick = { showService = !showService }) {
+            Text(if (showService) "▲ تنظیمات سرویس" else "▼ تنظیمات سرویس" + if (key.isNotBlank()) " (کلید ذخیره شده)" else "")
+        }
+        if (showService) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Text(
+                        "کلید API را از platform.deepseek.com بگیرید. این سرویس رایگان نیست ولی بسیار ارزان است (اعتبار کمی لازم است). کلید فقط روی همین گوشی می‌ماند و متنی که می‌فرستید به سرور آن سرویس می‌رود.",
+                        fontSize = 13.sp,
+                        lineHeight = 20.sp
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = key,
+                        onValueChange = { key = it.trim() },
+                        label = { Text("کلید API") },
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    OutlinedTextField(
+                        value = base,
+                        onValueChange = { base = it.trim() },
+                        label = { Text("آدرس سرویس") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    OutlinedTextField(
+                        value = model,
+                        onValueChange = { model = it.trim() },
+                        label = { Text("نام مدل") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+
+        // ---- متن کتاب ----
+        Text("متن کتاب", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+        Text(
+            "فایل متنی (.txt) انتخاب کنید یا متن را بچسبانید. اگر کتاب PDF است، متن آن را کپی کنید (خواندن مستقیم PDF هنوز پشتیبانی نمی‌شود).",
+            color = Color.Gray,
+            fontSize = 13.sp,
+            lineHeight = 19.sp
+        )
+        Spacer(Modifier.height(6.dp))
+        OutlinedButton(
+            onClick = { picker.launch(arrayOf("text/plain", "text/*")) },
+            enabled = !busy,
+            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
+        ) { Text("📄 انتخاب فایل متنی") }
+        Spacer(Modifier.height(6.dp))
+        OutlinedTextField(
+            value = source,
+            onValueChange = { source = it },
+            label = { Text("متن کتاب") },
+            minLines = 4,
+            maxLines = 8,
+            enabled = !busy,
+            modifier = Modifier.fillMaxWidth()
+        )
+        if (chunks.isNotEmpty()) {
+            val used = minOf(chunks.size, AiQuestions.MAX_CHUNKS, count ?: 1)
+            Text(
+                "${source.length} نویسه • ${chunks.size} بخش" +
+                    if (chunks.size > used) " • از بین آن‌ها $used بخش به‌طور یکنواخت استفاده می‌شود" else "",
+                color = Color.Gray,
+                fontSize = 12.sp
+            )
+        }
+        Spacer(Modifier.height(12.dp))
+
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(
+                value = countText,
+                onValueChange = { countText = it.filter { ch -> ch.isDigit() }.take(3) },
+                label = { Text("تعداد سوال (۱ تا ۱۰۰)") },
+                singleLine = true,
+                isError = count == null || count !in 1..100,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier.weight(1f)
+            )
+            OutlinedTextField(
+                value = timeText,
+                onValueChange = { timeText = it.filter { ch -> ch.isDigit() }.take(3) },
+                label = { Text("زمان (دقیقه)") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier.weight(1f)
+            )
+        }
+        Spacer(Modifier.height(12.dp))
+
+        val msg = message
+        if (msg != null) {
+            Text("❌ $msg", color = AiRed, fontSize = 14.sp, lineHeight = 21.sp)
+            Spacer(Modifier.height(8.dp))
+        }
+
+        if (busy) {
+            Text("⏳ $progress", fontSize = 15.sp)
+            Spacer(Modifier.height(6.dp))
+            OutlinedButton(
+                onClick = {
+                    job?.cancel()
+                    busy = false
+                    progress = ""
+                },
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
+            ) { Text("توقف") }
+        } else {
+            Button(
+                onClick = {
+                    AiQuestions.saveConfig(context, AiConfig(key, base, model))
+                    val cfg = AiConfig(key, base.ifBlank { AiQuestions.DEFAULT_BASE }, model.ifBlank { AiQuestions.DEFAULT_MODEL })
+                    val plan = AiQuestions.plan(chunks.size, count ?: 0)
+                    generated.clear()
+                    message = null
+                    round++
+                    busy = true
+                    job = scope.launch {
+                        var failed = 0
+                        var lastError: String? = null
+                        for ((i, step) in plan.withIndex()) {
+                            if (!isActive) break
+                            progress = "ساخت سوال... بخش ${i + 1} از ${plan.size} (${generated.size} سوال تا الان)"
+                            try {
+                                val qs = withContext(Dispatchers.IO) { AiQuestions.generate(cfg, chunks[step.first], step.second) }
+                                generated.addAll(qs)
+                            } catch (e: OnlineException) {
+                                failed++
+                                lastError = e.userMessage
+                                // خطای کلید/اعتبار را ادامه دادن فایده ندارد
+                                if (e.userMessage.contains("کلید") || e.userMessage.contains("اعتبار")) break
+                            } catch (e: Exception) {
+                                failed++
+                                lastError = "خطای نامشخص"
+                            }
+                        }
+                        if (generated.isEmpty()) {
+                            message = lastError ?: "سوالی ساخته نشد. متن را بررسی کنید و دوباره امتحان کنید."
+                        } else if (failed > 0) {
+                            message = "$failed بخش ساخته نشد (${lastError ?: ""}). سوال‌های ساخته‌شده پایین است."
+                        }
+                        busy = false
+                        progress = ""
+                    }
+                },
+                enabled = canGenerate,
+                modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary, contentColor = Color.White)
+            ) { Text("✨ ساخت سوال", fontSize = 18.sp) }
+            if (!canGenerate && !busy) {
+                Text(
+                    if (key.isBlank()) "ابتدا کلید API را در «تنظیمات سرویس» بنویسید."
+                    else if (chunks.isEmpty()) "متن کتاب را وارد کنید."
+                    else "تعداد سوال را بین ۱ تا ۱۰۰ بنویسید.",
+                    color = Color.Gray,
+                    fontSize = 12.sp
+                )
+            }
+        }
+        Spacer(Modifier.height(16.dp))
+
+        // ---- مرور و ذخیره ----
+        if (generated.isNotEmpty() && !busy) {
+            Text("✅ ${generated.size} سوال ساخته شد — مرور کنید", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = GreenDark)
+            Text(
+                "هوش مصنوعی ممکن است اشتباه کند؛ حتماً هر سوال و گزینهٔ درست (✔) را بخوانید و سوال نادرست را حذف کنید.",
+                color = AiRed,
+                fontSize = 13.sp,
+                lineHeight = 19.sp
+            )
+            Spacer(Modifier.height(8.dp))
+            generated.toList().forEachIndexed { i, q ->
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = GreenLight)
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text("${i + 1}. ${q.q}", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 15.sp, lineHeight = 22.sp)
+                        q.options.forEachIndexed { oi, o ->
+                            Text(
+                                (if (oi == q.correct) "✔ " else "   ") + "${oi + 1}) $o",
+                                color = if (oi == q.correct) GreenDark else Color.DarkGray,
+                                fontWeight = if (oi == q.correct) FontWeight.Bold else FontWeight.Normal,
+                                fontSize = 14.sp
+                            )
+                        }
+                        TextButton(onClick = { generated.remove(q) }) { Text("🗑 حذف این سوال", color = AiRed) }
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+            }
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(
+                value = title,
+                onValueChange = { title = it },
+                label = { Text("نام آزمون") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(Modifier.height(10.dp))
+            Button(
+                onClick = {
+                    val newTitle = title.trim()
+                    val minutes = ExamSearch.normalize(timeText).ifEmpty { "0" }.toIntOrNull() ?: -1
+                    val book = books.firstOrNull { it.name == bookName }
+                    if (newTitle.isEmpty()) {
+                        Toast.makeText(context, "نام آزمون را بنویسید", Toast.LENGTH_SHORT).show()
+                    } else if (minutes !in 0..600) {
+                        Toast.makeText(context, "زمان باید بین ۰ تا ۶۰۰ دقیقه باشد", Toast.LENGTH_SHORT).show()
+                    } else if (book?.exams?.any { it.key == Exam.keyOf(chapter, newTitle) } == true) {
+                        Toast.makeText(context, "آزمونی با این نام در این فصل هست", Toast.LENGTH_SHORT).show()
+                    } else {
+                        val exam = Exam(newTitle, generated.toList(), chapter = chapter, timeLimitMin = minutes)
+                        onBooksChange(ExamStore.saveExam(books, bookName, null, exam))
+                        Toast.makeText(context, "آزمون ذخیره شد. برای ارسال، «ارسال و نتایج» را بزنید.", Toast.LENGTH_LONG).show()
+                        onDone()
+                    }
+                },
+                modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary, contentColor = Color.White)
+            ) { Text("💾 ذخیره به‌عنوان آزمون", fontSize = 18.sp) }
+        }
+        Spacer(Modifier.height(24.dp))
+    }
+}

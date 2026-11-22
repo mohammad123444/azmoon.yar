@@ -60,6 +60,7 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.core.view.WindowCompat
 import com.example.quizapp.screens.ExamEditorScreen
 import com.example.quizapp.screens.ExamModeScreen
+import com.example.quizapp.screens.AiQuestionsScreen
 import com.example.quizapp.screens.ExamTestEditorScreen
 import com.example.quizapp.screens.TeacherResultsScreen
 import com.example.quizapp.screens.FileExamEditorScreen
@@ -179,6 +180,7 @@ sealed interface Screen {
     data class ExamEditor(val bookName: String, val chapter: String, val examKey: String?) : Screen
     data class FileExamEditor(val bookName: String, val chapter: String, val examKey: String?) : Screen
     data class TestEditor(val bookName: String, val chapter: String, val examKey: String?) : Screen
+    data class AiGen(val bookName: String, val chapter: String) : Screen
     data class TeacherResults(val bookName: String, val chapter: String, val examKey: String) : Screen
 }
 
@@ -212,6 +214,7 @@ private fun screenSaver(booksProvider: () -> List<Book>): Saver<Screen, ArrayLis
             is Screen.TestEditor ->
                 arrayListOf("ted", s.bookName, s.chapter).also { l -> s.examKey?.let { l.add(it) } }
             is Screen.TeacherResults -> arrayListOf("tres", s.bookName, s.chapter, s.examKey)
+            is Screen.AiGen -> arrayListOf("aig", s.bookName, s.chapter)
         }
     },
     restore = { l ->
@@ -237,6 +240,7 @@ private fun screenSaver(booksProvider: () -> List<Book>): Saver<Screen, ArrayLis
                 "fed" -> Screen.FileExamEditor(l[1], l[2], l.getOrNull(3))
                 "ted" -> Screen.TestEditor(l[1], l[2], l.getOrNull(3))
                 "tres" -> Screen.TeacherResults(l[1], l[2], l[3])
+                "aig" -> Screen.AiGen(l[1], l[2])
                 else -> Screen.Home
             }
         } catch (e: Exception) {
@@ -452,6 +456,7 @@ fun AppRoot(
         is Screen.FileExamEditor -> Screen.TeacherChapter(s.bookName, s.chapter)
         is Screen.TestEditor -> Screen.TeacherChapter(s.bookName, s.chapter)
         is Screen.TeacherResults -> Screen.TeacherChapter(s.bookName, s.chapter)
+        is Screen.AiGen -> Screen.TeacherChapter(s.bookName, s.chapter)
     }
 
     BackHandler(enabled = screen !is Screen.Home) {
@@ -610,6 +615,7 @@ fun AppRoot(
                         onEditFile = { key -> screen = Screen.FileExamEditor(s.bookName, s.chapter, key) },
                         onEditTest = { key -> screen = Screen.TestEditor(s.bookName, s.chapter, key) },
                         onResults = { key -> screen = Screen.TeacherResults(s.bookName, s.chapter, key) },
+                        onAi = { screen = Screen.AiGen(s.bookName, s.chapter) },
                         onBack = { screen = Screen.TeacherBook(s.bookName) }
                     )
                     is Screen.ExamEditor -> ExamEditorScreen(
@@ -626,6 +632,14 @@ fun AppRoot(
                         bookName = s.bookName,
                         chapter = s.chapter,
                         originalKey = s.examKey,
+                        onBooksChange = { updateBooks(it) },
+                        onDone = { screen = Screen.TeacherChapter(s.bookName, s.chapter) },
+                        onBack = { screen = Screen.TeacherChapter(s.bookName, s.chapter) }
+                    )
+                    is Screen.AiGen -> AiQuestionsScreen(
+                        books = books,
+                        bookName = s.bookName,
+                        chapter = s.chapter,
                         onBooksChange = { updateBooks(it) },
                         onDone = { screen = Screen.TeacherChapter(s.bookName, s.chapter) },
                         onBack = { screen = Screen.TeacherChapter(s.bookName, s.chapter) }

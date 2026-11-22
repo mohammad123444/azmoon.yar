@@ -49,6 +49,7 @@ fun TeacherChapterScreen(
     onEditFile: (String?) -> Unit,
     onEditTest: (String?) -> Unit,
     onResults: (String) -> Unit,
+    onAi: () -> Unit,
     onBack: () -> Unit
 ) {
     val exams = books.firstOrNull { it.name == bookName }?.examsIn(chapter) ?: emptyList()
@@ -83,6 +84,11 @@ fun TeacherChapterScreen(
         ) {
             Text("📝 ساخت آزمون تستی", fontSize = 17.sp)
         }
+        Spacer(Modifier.height(8.dp))
+        OutlinedButton(
+            onClick = onAi,
+            modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)
+        ) { Text("🤖 ساخت سوال از متن کتاب (هوش مصنوعی)", fontSize = 16.sp) }
         TextButton(onClick = { showOtherNew = !showOtherNew }) {
             Text(if (showOtherNew) "▲ پنهان" else "▼ روش‌های دیگر ساخت آزمون")
         }
