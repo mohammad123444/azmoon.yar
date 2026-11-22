@@ -47,8 +47,9 @@ import com.example.quizapp.Question
 import com.example.quizapp.ui.theme.GreenPrimary
 
 /** پیش‌نویس یک سوال تستی در ویرایشگر (فقط تا زمان ذخیره) */
-private class TestDraft(q0: String, opts: List<String>, correct0: Int, val addedAt: Long) {
+private class TestDraft(q0: String, opts: List<String>, correct0: Int, val addedAt: Long, analysis0: String = "") {
     var q by mutableStateOf(q0)
+    var analysis by mutableStateOf(analysis0)
     val options = mutableStateListOf<String>().also { it.addAll(opts) }
     var correct by mutableIntStateOf(correct0)
 }
@@ -83,7 +84,7 @@ fun ExamTestEditorScreen(
             if (original != null && original.isTest) {
                 original.questions.forEach { q ->
                     val padded = q.options + List((4 - q.options.size).coerceAtLeast(0)) { "" }
-                    list.add(TestDraft(q.q, padded, q.correct, q.addedAt))
+                    list.add(TestDraft(q.q, padded, q.correct, q.addedAt, q.analysis))
                 }
             } else {
                 list.add(emptyDraft())
@@ -172,6 +173,13 @@ fun ExamTestEditorScreen(
                             )
                         }
                     }
+                    OutlinedTextField(
+                        value = d.analysis,
+                        onValueChange = { d.analysis = it },
+                        label = { Text("پاسخ تحلیلی (اختیاری)") },
+                        minLines = 2,
+                        modifier = Modifier.fillMaxWidth()
+                    )
                 }
             }
             Spacer(Modifier.height(10.dp))
@@ -217,7 +225,7 @@ fun ExamTestEditorScreen(
                                     d.q.trim(),
                                     kept[newCorrect].second,
                                     if (d.addedAt > 0L) d.addedAt else now,
-                                    "",
+                                    d.analysis.trim(),
                                     kept.map { it.second },
                                     newCorrect
                                 )

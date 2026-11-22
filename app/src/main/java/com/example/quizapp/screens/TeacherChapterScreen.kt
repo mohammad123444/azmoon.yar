@@ -75,15 +75,20 @@ fun TeacherChapterScreen(
         Spacer(Modifier.height(16.dp))
 
         Button(
-            onClick = { onEditTest(null) },
+            onClick = { onEdit(null) },
             modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp),
             colors = ButtonDefaults.buttonColors(
                 containerColor = GreenPrimary,
                 contentColor = Color.White
             )
         ) {
-            Text("📝 ساخت آزمون تستی", fontSize = 17.sp)
+            Text("➕ ساخت آزمون (سوال‌ها، پاسخ‌ها و تحلیل)", fontSize = 16.sp)
         }
+        Text(
+            "سوال‌های گزینه‌دار خودکار چهارگزینه‌ای می‌شوند؛ بقیه تشریحی‌اند.",
+            color = Color.Gray,
+            fontSize = 12.sp
+        )
         Spacer(Modifier.height(8.dp))
         OutlinedButton(
             onClick = onAi,
@@ -94,9 +99,9 @@ fun TeacherChapterScreen(
         }
         if (showOtherNew) {
             OutlinedButton(
-                onClick = { onEdit(null) },
+                onClick = { onEditTest(null) },
                 modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
-            ) { Text("➕ آزمون متنی (سوال و پاسخ)", fontSize = 15.sp) }
+            ) { Text("📝 آزمون تستی با فرم (هر گزینه جدا)", fontSize = 15.sp) }
             Spacer(Modifier.height(6.dp))
             OutlinedButton(
                 onClick = { onEditFile(null) },
@@ -123,7 +128,6 @@ fun TeacherChapterScreen(
                     ) {
                         TextButton(onClick = {
                             if (exam.isFileExam) onEditFile(exam.key)
-                            else if (exam.isTest) onEditTest(exam.key)
                             else onEdit(exam.key)
                         }) { Text("✏️ ویرایش") }
                         if (exam.isTest) {

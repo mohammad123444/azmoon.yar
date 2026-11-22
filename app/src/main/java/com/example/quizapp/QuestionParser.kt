@@ -19,6 +19,7 @@ data class AlignResult(val values: List<String>, val error: String?)
 object QuestionParser {
 
     private val numberPrefix = Regex("^\\s*(\\d{1,4})\\s*[.)\\-–—:،]\\s*")
+    private const val MAX_NUMERIC_OPTIONS = 4
 
     private fun normalizeDigits(s: String): String {
         val sb = StringBuilder()
@@ -83,15 +84,24 @@ object QuestionParser {
         if (numberPrefix.containsMatchIn(normalizeDigits(firstLine))) {
             val numbers = mutableListOf<Int>()
             val texts = mutableListOf<StringBuilder>()
+            // گزینه‌های عددی (۱) ۲) ۳) ۴)) داخل سوال: وقتی گزینهٔ «۱» دیده شد، تا گزینهٔ «۴» جزو همان سوال می‌مانند،
+            // حتی اگر شماره‌شان از شمارهٔ سوال بزرگ‌تر باشد (مثلاً گزینهٔ ۲ در سوال ۱)
+            var optionNext = 0
             for (line in lines) {
                 if (line.isBlank()) continue
                 val match = numberPrefix.find(normalizeDigits(line))
                 val num = match?.groupValues?.get(1)?.toIntOrNull()
-                if (match != null && num != null && (numbers.isEmpty() || num > numbers.last())) {
+                val isOption = optionNext in 2..MAX_NUMERIC_OPTIONS && num == optionNext && texts.isNotEmpty()
+                if (isOption) {
+                    optionNext = if (optionNext >= MAX_NUMERIC_OPTIONS) 0 else optionNext + 1
+                    texts.last().append("\n").append(line.trim())
+                } else if (match != null && num != null && (numbers.isEmpty() || num > numbers.last())) {
                     numbers.add(num)
+                    optionNext = 0
                     // طول رشته بعد از نرمال‌سازی ارقام تغییر نمی‌کند
                     texts.add(StringBuilder(line.substring(match.range.last + 1).trim()))
                 } else if (texts.isNotEmpty()) {
+                    if (num == 1 && match != null) optionNext = 2
                     texts.last().append("\n").append(line.trim())
                 }
             }
@@ -190,5 +200,163 @@ object QuestionParser {
             emptyList(),
             "تحلیل‌های بدون شماره باید به تعداد سوال‌ها (${questions.size}) باشند؛ یا هر تحلیل را با شمارهٔ سوالش شروع کنید"
         )
+    }
+
+    // ---------- سوال چندگزینه‌ای: تشخیص گزینه‌ها و پیدا کردن گزینهٔ درست ----------
+
+    /** سوالِ جداشده: متن سوال + گزینه‌ها (اگر گزینه نداشته باشد options خالی است) */
+    data class Split(val stem: String, val options: List<String>)
+
+    /** سوالِ آمادهٔ ذخیره: options خالی یعنی تشریحی؛ وگرنه correct شمارهٔ گزینهٔ درست (از صفر) */
+    data class Built(val q: String, val a: String, val options: List<String>, val correct: Int)
+
+    data class BuildResult(val items: List<Built>, val error: String?)
+
+    private const val MAX_OPTIONS = 6
+    private val persianLetters = listOf("الف", "ب", "ج", "د", "ه", "و")
+    private val latinLetters = listOf("a", "b", "c", "d", "e", "f")
+
+    /** نشانهٔ گزینه‌ها: ۱) ۲) ... ، الف) ب) ... ، A) B) ... */
+    private fun markerRegex(kind: Int, index: Int): Regex {
+        val token = when (kind) {
+            0 -> (index + 1).toString()
+            1 -> persianLetters[index]
+            else -> latinLetters[index]
+        }
+        val opt = if (kind == 2) "(?i)" else ""
+        return Regex("$opt^\\s*[(\\[]?\\s*" + token + "\\s*[)\\].:\\-–—]\\s*")
+    }
+
+    private fun inlineMarker(kind: Int, index: Int): Regex {
+        val token = when (kind) {
+            0 -> (index + 1).toString()
+            1 -> persianLetters[index]
+            else -> latinLetters[index]
+        }
+        val opt = if (kind == 2) "(?i)" else ""
+        return Regex(opt + "(?<![\\p{L}\\p{Nd}])[(\\[]?" + token + "\\s*[)\\].:\\-–—]")
+    }
+
+    /**
+     * گزینه‌ها را از انتهای متن یک سوال جدا می‌کند. هر دو قالب پشتیبانی می‌شود:
+     * هر گزینه در یک خط («۱) ...» «الف) ...» «A) ...») یا همهٔ گزینه‌ها در یک خط.
+     * اگر دست‌کم دو گزینهٔ پشت‌سرهم پیدا نشود، سوال گزینه ندارد (تشریحی است).
+     */
+    fun splitOptions(text: String): Split {
+        val raw = text.replace("\r", "").trim()
+        val lines = raw.split("\n")
+        val norm = lines.map { normalizeDigits(it) }
+
+        // حالت ۱: هر گزینه در یک خط
+        for (kind in 0..2) {
+            for (start in lines.indices) {
+                if (!markerRegex(kind, 0).containsMatchIn(norm[start])) continue
+                val opts = mutableListOf<StringBuilder>()
+                var next = 0
+                for (li in start until lines.size) {
+                    val m = if (next < MAX_OPTIONS) markerRegex(kind, next).find(norm[li]) else null
+                    if (m != null) {
+                        opts.add(StringBuilder(lines[li].substring(m.range.last + 1).trim()))
+                        next++
+                    } else if (opts.isNotEmpty() && lines[li].isNotBlank()) {
+                        opts.last().append(" ").append(lines[li].trim())
+                    }
+                }
+                val cleaned = opts.map { it.toString().trim() }
+                if (cleaned.size in 2..MAX_OPTIONS && cleaned.all { it.isNotEmpty() }) {
+                    return Split(lines.subList(0, start).joinToString("\n").trim(), cleaned)
+                }
+            }
+        }
+
+        // حالت ۲: همهٔ گزینه‌ها در یک خط («۱) الف ۲) ب ۳) ج ۴) د»)
+        val normAll = normalizeDigits(raw)
+        for (kind in 0..2) {
+            val first = inlineMarker(kind, 0).findAll(normAll).toList()
+            for (f in first.reversed()) {
+                val positions = mutableListOf(f.range.first to f.range.last + 1)
+                var from = f.range.last + 1
+                var idx = 1
+                while (idx < MAX_OPTIONS) {
+                    val m = inlineMarker(kind, idx).find(normAll, from) ?: break
+                    positions.add(m.range.first to m.range.last + 1)
+                    from = m.range.last + 1
+                    idx++
+                }
+                if (positions.size >= 2) {
+                    val opts = positions.indices.map { i ->
+                        val s = positions[i].second
+                        val e = if (i + 1 < positions.size) positions[i + 1].first else raw.length
+                        raw.substring(s, e).trim()
+                    }
+                    if (opts.all { it.isNotEmpty() }) {
+                        return Split(raw.substring(0, positions[0].first).trim(), opts)
+                    }
+                }
+            }
+        }
+        return Split(raw, emptyList())
+    }
+
+    private fun looseCompare(s: String): String =
+        normalizeDigits(s).replace("**", "").replace(Regex("[\\s.,،؛;:!؟?\"'«»()\\[\\]\\-–—_/]+"), " ").trim().lowercase()
+
+    /** پاسخ نوشته‌شده («۲»، «ب»، «گزینهٔ ۳»، «ج) متن گزینه»، یا خودِ متن گزینه) را به شمارهٔ گزینه (از صفر) تبدیل می‌کند؛ نشد null */
+    fun resolveAnswer(answer: String, options: List<String>): Int? {
+        if (options.size < 2) return null
+        var a = normalizeDigits(answer.replace("**", "")).trim()
+        a = a.replace(Regex("^(?:پاسخ|جواب|گزینه(?:\u200c|\\s)?(?:ی)?\\s*(?:صحیح|درست)?)\\s*[:：]?\\s*"), "")
+        a = a.replace(Regex("^(?:صحیح|درست)\\s*[:：]?\\s*"), "").trim()
+        a = a.trimStart('(', '[').trim()
+
+        Regex("^(\\d{1,2})(?!\\d)\\s*(?:[)\\].:\\-–—]|\\s|$)").find(a)?.let { m ->
+            val n = m.groupValues[1].toInt()
+            if (n in 1..options.size) return n - 1
+        }
+        for (i in options.indices.take(persianLetters.size)) {
+            if (Regex("^" + persianLetters[i] + "(?=\\s|$|[)\\].:\\-–—])").containsMatchIn(a)) return i
+        }
+        Regex("^([A-Fa-f])(?=\\s|$|[)\\].:\\-–—])").find(a)?.let { m ->
+            val i = m.groupValues[1].lowercase()[0] - 'a'
+            if (i in options.indices) return i
+        }
+        val loose = looseCompare(a)
+        if (loose.isNotEmpty()) {
+            val exact = options.indexOfFirst { looseCompare(it) == loose }
+            if (exact >= 0) return exact
+            val tail = looseCompare(a.replace(Regex("^\\S{1,4}[)\\].:\\-–—]\\s*"), ""))
+            if (tail.isNotEmpty()) {
+                val byTail = options.indexOfFirst { looseCompare(it) == tail }
+                if (byTail >= 0) return byTail
+            }
+        }
+        return null
+    }
+
+    /**
+     * سوال‌ها و پاسخ‌ها را جفت می‌کند و برای هر سوال تعیین می‌کند چندگزینه‌ای است (گزینه‌ها داخل متن سوال)
+     * یا تشریحی. سوال چندگزینه‌ای باید پاسخی داشته باشد که یکی از گزینه‌ها را مشخص کند.
+     */
+    fun build(questions: List<Item>, answers: List<Item>): BuildResult {
+        val pairing = pair(questions, answers)
+        if (pairing.error != null) return BuildResult(emptyList(), pairing.error)
+        val out = ArrayList<Built>()
+        for ((i, p) in pairing.pairs.withIndex()) {
+            val (qText, aText) = p
+            val split = splitOptions(qText)
+            if (split.options.isEmpty() || split.stem.isBlank()) {
+                out.add(Built(qText, aText, emptyList(), -1))
+                continue
+            }
+            val label = questions.getOrNull(i)?.number ?: (i + 1)
+            val k = resolveAnswer(aText, split.options)
+                ?: return BuildResult(
+                    emptyList(),
+                    "سوال $label گزینه دارد، ولی پاسخ آن («${aText.take(30)}») با هیچ گزینه‌ای نمی‌خواند. " +
+                        "شمارهٔ گزینه را بنویسید (مثلاً ۲ یا ب)."
+                )
+            out.add(Built(split.stem, split.options[k], split.options, k))
+        }
+        return BuildResult(out, null)
     }
 }
