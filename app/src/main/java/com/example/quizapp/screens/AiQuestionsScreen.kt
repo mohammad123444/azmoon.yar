@@ -51,14 +51,15 @@ import com.example.quizapp.Book
 import com.example.quizapp.Exam
 import com.example.quizapp.ExamSearch
 import com.example.quizapp.ExamStore
-import com.example.quizapp.GeminiFile
 import com.example.quizapp.OnlineException
+import com.example.quizapp.PdfPages
 import com.example.quizapp.Question
 import com.example.quizapp.ui.theme.GreenDark
 import com.example.quizapp.ui.theme.GreenLight
 import com.example.quizapp.ui.theme.GreenPrimary
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -97,7 +98,6 @@ fun AiQuestionsScreen(
     var pdfPages by remember { mutableIntStateOf(0) }
     var fromText by remember { mutableStateOf("1") }
     var toText by remember { mutableStateOf("") }
-    var uploaded by remember { mutableStateOf<GeminiFile?>(null) }
 
     val pdfPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         if (uri != null) {
@@ -127,7 +127,6 @@ fun AiQuestionsScreen(
                     pdfPages = res.first
                     fromText = "1"
                     toText = res.first.toString()
-                    uploaded = null
                     source = ""
                     message = null
                 }
@@ -205,7 +204,7 @@ fun AiQuestionsScreen(
         // ---- متن کتاب ----
         Text("منبع سوال‌ها", fontWeight = FontWeight.Bold, fontSize = 16.sp)
         Text(
-            "کتاب PDF را انتخاب کنید (برای PDF اسکن‌شده هم کار می‌کند)، یا فایل متنی (.txt) بدهید، یا متن را بچسبانید.",
+            "کتاب PDF را انتخاب کنید (صفحه‌ها خوانده می‌شود؛ برای PDF اسکن‌شده هم کار می‌کند)، یا فایل متنی (.txt) بدهید، یا متن را بچسبانید.",
             color = Color.Gray,
             fontSize = 13.sp,
             lineHeight = 19.sp
@@ -225,7 +224,7 @@ fun AiQuestionsScreen(
                 Column(modifier = Modifier.padding(12.dp)) {
                     Text("✅ PDF انتخاب شد — $pdfPages صفحه", fontWeight = FontWeight.Bold)
                     Text(
-                        "از کدام صفحه تا کدام صفحه سوال ساخته شود؟ (شمارهٔ صفحه مثل نمایشگر PDF). بازهٔ کوچک‌تر دقیق‌تر و سریع‌تر است.",
+                        "از کدام صفحه تا کدام صفحه؟ (شمارهٔ صفحه مثل نمایشگر PDF). اگر بازه بزرگ باشد در هر مرحله چند صفحه از آن بخش نمونه‌برداری می‌شود؛ برای پوشش کامل، بازهٔ کوچک‌تر (مثلاً یک فصل) بدهید.",
                         fontSize = 13.sp,
                         lineHeight = 19.sp,
                         color = Color.Gray
@@ -258,7 +257,6 @@ fun AiQuestionsScreen(
                             pdfFile?.delete()
                             pdfFile = null
                             pdfPages = 0
-                            uploaded = null
                         },
                         enabled = !busy
                     ) { Text("🗑 حذف PDF", color = AiRed) }
@@ -345,37 +343,31 @@ fun AiQuestionsScreen(
                         var failed = 0
                         var lastError: String? = null
                         if (pdf != null) {
-                            try {
-                                val upf: GeminiFile = uploaded ?: run {
-                                    progress = "بارگذاری کتاب برای هوش مصنوعی... (برای کتاب بزرگ چند دقیقه طول می‌کشد)"
-                                    withContext(Dispatchers.IO) { AiQuestions.uploadFile(cfg, pdf, "application/pdf") }
-                                }.also { uploaded = it }
-                                for ((i, b) in pdfPlan.withIndex()) {
-                                    if (!isActive) break
-                                    progress = "ساخت سوال... مرحله ${i + 1} از ${pdfPlan.size} (${generated.size} سوال تا الان)"
-                                    try {
-                                        val qs = withContext(Dispatchers.IO) {
-                                            AiQuestions.generateFromPdf(cfg, upf, b.third, b.first, b.second)
-                                        }
+                            for ((i, b) in pdfPlan.withIndex()) {
+                                if (!isActive) break
+                                progress = "مرحله ${i + 1} از ${pdfPlan.size}: خواندن صفحه‌ها و ساخت سوال... (${generated.size} سوال تا الان)"
+                                var stop = false
+                                try {
+                                    val imgs = withContext(Dispatchers.IO) { PdfPages.render(pdf, b.pages) }
+                                    if (imgs.isEmpty()) {
+                                        failed++
+                                        lastError = "صفحه‌ها خوانده نشد."
+                                    } else {
+                                        val qs = withContext(Dispatchers.IO) { AiQuestions.generateFromPages(cfg, imgs, b.n) }
                                         val seen = generated.map { it.q.trim() }.toHashSet()
                                         generated.addAll(qs.filter { seen.add(it.q.trim()) })
-                                    } catch (e: OnlineException) {
-                                        failed++
-                                        lastError = e.userMessage
-                                        if (e.userMessage.contains("کلید") || e.userMessage.contains("اعتبار") || e.userMessage.contains("نام مدل")) break
-                                    } catch (e: Exception) {
-                                        failed++
-                                        lastError = "خطای نامشخص"
                                     }
+                                } catch (e: OnlineException) {
+                                    failed++
+                                    lastError = e.userMessage
+                                    if (e.userMessage.contains("کلید") || e.userMessage.contains("اعتبار")) stop = true
+                                } catch (e: Exception) {
+                                    failed++
+                                    lastError = "خطای نامشخص"
                                 }
-                            } catch (e: OnlineException) {
-                                uploaded = null
-                                failed++
-                                lastError = e.userMessage
-                            } catch (e: Exception) {
-                                uploaded = null
-                                failed++
-                                lastError = "خطای نامشخص"
+                                if (stop) break
+                                // محدودیت رایگان حدود ۱۰ درخواست در دقیقه است؛ بین مرحله‌ها کمی مکث
+                                if (i < pdfPlan.size - 1 && isActive) delay(7000)
                             }
                         } else for ((i, step) in plan.withIndex()) {
                             if (!isActive) break
@@ -392,6 +384,7 @@ fun AiQuestionsScreen(
                                 failed++
                                 lastError = "خطای نامشخص"
                             }
+                            if (i < plan.size - 1 && isActive) delay(7000)
                         }
                         if (generated.isEmpty()) {
                             message = lastError ?: "سوالی ساخته نشد. متن را بررسی کنید و دوباره امتحان کنید."

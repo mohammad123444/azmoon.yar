@@ -3,7 +3,6 @@ package com.example.quizapp
 import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.Random
@@ -21,7 +20,13 @@ data class AiConfig(
  */
 object AiQuestions {
     const val DEFAULT_BASE = "https://generativelanguage.googleapis.com/v1beta"
-    const val DEFAULT_MODEL = "gemini-flash-latest"
+    const val DEFAULT_MODEL = "gemini-2.5-flash"
+
+    /** اگر مدل اول شلوغ/محدود بود، به‌ترتیب به مدل بعدی می‌رود (۲.۵ فلش پایدار و رایگان‌تر از «latest» است) */
+    val MODELS = listOf("gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-flash-latest")
+
+    @Volatile
+    private var preferredModel: String? = null
     const val CHUNK_CHARS = 6000
     const val MAX_CHUNKS = 40
     private const val OLD_PREFS = "ai_config"
@@ -81,7 +86,7 @@ object AiQuestions {
     }
 
     fun systemPrompt(pdf: Boolean = false): String =
-        "تو یک معلم باتجربه هستی. فقط بر اساس " + (if (pdf) "محتوای کتابِ پیوست (فایل PDF)" else "«متن» داده‌شده") +
+        "تو یک معلم باتجربه هستی. فقط بر اساس " + (if (pdf) "تصویر صفحه‌های کتابِ پیوست" else "«متن» داده‌شده") +
             " سوال چهارگزینه‌ای بساز، نه از دانسته‌های بیرون. " +
             (if (pdf) "از فهرست مطالب، پیش‌گفتار و صفحه‌های بدون محتوای آموزشی سوال نساز. " else "") +
             "سوال‌ها پاسخ روشن و یکتا داشته باشند و به زبان خودِ متن باشند. در هر سوال دقیقاً ۴ گزینهٔ متفاوت بنویس که فقط یکی درست است. " +
@@ -107,44 +112,47 @@ object AiQuestions {
             )
             .toString()
 
-    /** بدنهٔ درخواست برای ساخت سوال از صفحه‌های from..to یک PDF که قبلاً آپلود شده */
-    fun pdfRequestBody(fileUri: String, n: Int, from: Int, to: Int, mime: String = "application/pdf"): String =
-        JSONObject()
-            .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", systemPrompt(true)))))
-            .put(
-                "contents",
-                JSONArray().put(
-                    JSONObject().put("role", "user").put(
-                        "parts",
-                        JSONArray()
-                            .put(JSONObject().put("fileData", JSONObject().put("mimeType", mime).put("fileUri", fileUri)))
-                            .put(
-                                JSONObject().put(
-                                    "text",
-                                    "تعداد سوال: $n\nفقط از صفحه‌های $from تا $to همین کتاب (شمارهٔ صفحه همان است که در نمایشگر PDF دیده می‌شود) سوال بساز."
-                                )
-                            )
-                    )
-                )
+    /** بدنهٔ درخواست با تصویر چند صفحه: هر عضو (شمارهٔ صفحه، تصویر JPEG به‌صورت base64) */
+    fun imagesRequestBody(pages: List<Pair<Int, String>>, n: Int): String {
+        val parts = JSONArray()
+        for ((num, b64) in pages) {
+            parts.put(JSONObject().put("text", "صفحهٔ $num:"))
+            parts.put(JSONObject().put("inlineData", JSONObject().put("mimeType", "image/jpeg").put("data", b64)))
+        }
+        parts.put(
+            JSONObject().put(
+                "text",
+                "تعداد سوال: $n\nفقط از محتوای همین صفحه‌ها (${pages.joinToString("، ") { it.first.toString() }}) سوال بساز. " +
+                    "اگر صفحه‌ای محتوای آموزشی ندارد از آن سوال نساز."
             )
+        )
+        return JSONObject()
+            .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", systemPrompt(true)))))
+            .put("contents", JSONArray().put(JSONObject().put("role", "user").put("parts", parts)))
             .put(
                 "generationConfig",
-                JSONObject().put("temperature", 0.3).put("maxOutputTokens", 8192).put("responseMimeType", "application/json")
+                JSONObject().put("temperature", 0.3).put("maxOutputTokens", 16384).put("responseMimeType", "application/json")
             )
             .toString()
+    }
 
-    /** صفحه‌های from..to را به چند مرحله می‌شکند و تعداد سوال را بینشان پخش می‌کند: (از صفحه، تا صفحه، تعداد سوال) */
-    fun planPdf(from: Int, to: Int, total: Int, perBatch: Int = 15): List<Triple<Int, Int, Int>> {
+    /**
+     * صفحه‌های from..to را به چند مرحله می‌شکند (هر مرحله حدود qPerBatch سوال) و در هر مرحله حداکثر maxPages صفحه
+     * (به‌طور یکنواخت از بخش همان مرحله) برمی‌دارد. مرحله‌های کوچک = سریع‌تر و کمتر شلوغ.
+     */
+    fun planPdf(from: Int, to: Int, total: Int, qPerBatch: Int = 6, maxPages: Int = 10): List<PdfBatch> {
         if (total <= 0 || from < 1 || to < from) return emptyList()
         val pages = to - from + 1
-        val batches = minOf((total + perBatch - 1) / perBatch, pages, total)
+        val batches = minOf((total + qPerBatch - 1) / qPerBatch, pages, total)
         val base = total / batches
         var extra = total % batches
         return (0 until batches).map { i ->
             val a = from + i * pages / batches
             val b = from + (i + 1) * pages / batches - 1
+            val size = b - a + 1
+            val list = if (size <= maxPages) (a..b).toList() else (0 until maxPages).map { k -> a + k * size / maxPages }.distinct()
             val n = base + if (extra > 0) { extra--; 1 } else 0
-            Triple(a, b, n)
+            PdfBatch(list, n)
         }
     }
 
@@ -172,11 +180,18 @@ object AiQuestions {
     fun parse(reply: String, random: Random = Random(), now: Long = System.currentTimeMillis()): List<Question> {
         val start = reply.indexOf('[')
         val end = reply.lastIndexOf(']')
-        if (start < 0 || end <= start) return emptyList()
+        if (start < 0) return emptyList()
         val arr = try {
             JSONArray(reply.substring(start, end + 1))
         } catch (e: Exception) {
-            return emptyList()
+            // پاسخِ نیمه‌کاره (قطع‌شده): فقط موردهای کامل نگه داشته می‌شود
+            try {
+                val cut = reply.lastIndexOf('}')
+                if (cut <= start) return emptyList()
+                JSONArray(reply.substring(start, cut + 1) + "]")
+            } catch (e2: Exception) {
+                return emptyList()
+            }
         }
         val out = ArrayList<Question>()
         for (i in 0 until arr.length()) {
@@ -212,9 +227,9 @@ object AiQuestions {
         else -> "سرویس خطا داد ($status)" + shortError(errBody).let { if (it.isBlank()) "." else ": $it" }
     }
 
-    private class HttpResult(val status: Int, val body: String, val uploadUrl: String)
+    private class HttpResult(val status: Int, val body: String)
 
-    private fun http(url: String, method: String, headers: Map<String, String>, bytes: ByteArray?, file: File?): HttpResult {
+    private fun http(url: String, method: String, headers: Map<String, String>, bytes: ByteArray?): HttpResult {
         val conn = try {
             URL(url).openConnection() as HttpURLConnection
         } catch (e: Exception) {
@@ -225,14 +240,9 @@ object AiQuestions {
             conn.connectTimeout = 20000
             conn.readTimeout = 180000
             for ((k, v) in headers) conn.setRequestProperty(k, v)
-            if (bytes != null || file != null) {
+            if (bytes != null) {
                 conn.doOutput = true
-                if (file != null) {
-                    conn.setFixedLengthStreamingMode(file.length())
-                    file.inputStream().use { ins -> conn.outputStream.use { out -> ins.copyTo(out) } }
-                } else {
-                    conn.outputStream.use { it.write(bytes ?: ByteArray(0)) }
-                }
+                conn.outputStream.use { it.write(bytes) }
             }
             val status = conn.responseCode
             val stream = if (status in 200..299) conn.inputStream else conn.errorStream
@@ -241,7 +251,7 @@ object AiQuestions {
             } catch (e: Exception) {
                 ""
             }
-            return HttpResult(status, body, conn.getHeaderField("X-Goog-Upload-URL").orEmpty())
+            return HttpResult(status, body)
         } catch (e: OnlineException) {
             throw e
         } catch (e: Exception) {
@@ -259,7 +269,7 @@ object AiQuestions {
             if ((r.status == 429 || r.status == 503) && attempt < retries) {
                 attempt++
                 try {
-                    Thread.sleep(delayMs)
+                    Thread.sleep(minOf(delayMs shl (attempt - 1), 60000L))
                 } catch (e: InterruptedException) {
                     throw OnlineException("متوقف شد.")
                 }
@@ -291,10 +301,29 @@ object AiQuestions {
 
     private fun generateWith(cfg: AiConfig, body: String, random: Random, retries: Int, retryDelayMs: Long): List<Question> {
         requireKey(cfg)
-        val url = base(cfg) + "/models/" + cfg.model.trim() + ":generateContent"
-        val r = withRetry(retries, retryDelayMs) { http(url, "POST", jsonHeaders(cfg), body.toByteArray(Charsets.UTF_8), null) }
-        if (r.status !in 200..299) throw OnlineException(httpMessage(r.status, r.body))
-        return questionsFromResponse(r.body, random)
+        // مدل انتخابی (یا آخرین مدلی که جواب داد) اول؛ بعد بقیه
+        val first = preferredModel ?: cfg.model.trim()
+        val order = (listOf(first, cfg.model.trim()) + MODELS).filter { it.isNotBlank() }.distinct()
+        var last: OnlineException? = null
+        for (model in order) {
+            val url = base(cfg) + "/models/" + model + ":generateContent"
+            val r = withRetry(retries, retryDelayMs) { http(url, "POST", jsonHeaders(cfg), body.toByteArray(Charsets.UTF_8)) }
+            if (r.status in 200..299) {
+                val qs = questionsFromResponse(r.body, random)
+                preferredModel = model
+                if (qs.isEmpty()) throw OnlineException("مدل از این بخش سوال قابل‌استفاده‌ای نساخت.")
+                return qs
+            }
+            val msg = OnlineException(httpMessage(r.status, r.body))
+            // شلوغی، سهمیه یا مدل ناموجود: مدل بعدی را امتحان کن؛ بقیهٔ خطاها (کلید و...) را همین‌جا گزارش بده
+            if (r.status == 429 || r.status == 503 || r.status == 500 || r.status == 404) {
+                last = msg
+                if (preferredModel == model) preferredModel = null
+                continue
+            }
+            throw msg
+        }
+        throw last ?: OnlineException("سرویس در دسترس نیست.")
     }
 
     /** برای یک بخش از متن، سوال می‌سازد (مسدودکننده). */
@@ -303,79 +332,19 @@ object AiQuestions {
         chunk: String,
         n: Int,
         random: Random = Random(),
-        retries: Int = 3,
-        retryDelayMs: Long = 20000
+        retries: Int = 2,
+        retryDelayMs: Long = 8000
     ): List<Question> = generateWith(cfg, requestBody(chunk, n), random, retries, retryDelayMs)
 
-    /** برای صفحه‌های from..to از PDFِ آپلودشده سوال می‌سازد (مسدودکننده). */
-    fun generateFromPdf(
+    /** برای چند صفحهٔ کتاب (به‌صورت تصویر JPEG) سوال می‌سازد (مسدودکننده). */
+    fun generateFromPages(
         cfg: AiConfig,
-        file: GeminiFile,
+        pages: List<Pair<Int, String>>,
         n: Int,
-        from: Int,
-        to: Int,
         random: Random = Random(),
-        retries: Int = 3,
-        retryDelayMs: Long = 20000
-    ): List<Question> = generateWith(cfg, pdfRequestBody(file.uri, n, from, to, file.mime), random, retries, retryDelayMs)
-
-    /** فایل (مثلاً PDF) را در Files API گوگل آپلود می‌کند (۴۸ ساعت می‌ماند) و تا آماده شدن صبر می‌کند. */
-    fun uploadFile(cfg: AiConfig, file: File, mime: String = "application/pdf", displayName: String = "book"): GeminiFile {
-        requireKey(cfg)
-        val b = base(cfg)
-        val origin = b.substringBefore("/v1beta")
-        val startHeaders = mapOf(
-            "x-goog-api-key" to cfg.key.trim(),
-            "X-Goog-Upload-Protocol" to "resumable",
-            "X-Goog-Upload-Command" to "start",
-            "X-Goog-Upload-Header-Content-Length" to file.length().toString(),
-            "X-Goog-Upload-Header-Content-Type" to mime,
-            "Content-Type" to "application/json"
-        )
-        val meta = JSONObject().put("file", JSONObject().put("display_name", displayName)).toString().toByteArray(Charsets.UTF_8)
-        val start = http("$origin/upload/v1beta/files", "POST", startHeaders, meta, null)
-        if (start.status !in 200..299) throw OnlineException(httpMessage(start.status, start.body))
-        if (start.uploadUrl.isBlank()) throw OnlineException("پاسخ سرویس نامعتبر بود.")
-        val up = withRetry(2, 10000) {
-            http(
-                start.uploadUrl, "POST",
-                mapOf(
-                    "x-goog-api-key" to cfg.key.trim(),
-                    "X-Goog-Upload-Offset" to "0",
-                    "X-Goog-Upload-Command" to "upload, finalize"
-                ),
-                null, file
-            )
-        }
-        if (up.status !in 200..299) throw OnlineException(httpMessage(up.status, up.body))
-        var info = try {
-            JSONObject(up.body).getJSONObject("file")
-        } catch (e: Exception) {
-            throw OnlineException("پاسخ سرویس نامعتبر بود.")
-        }
-        var tries = 0
-        while (info.optString("state", "ACTIVE") == "PROCESSING" && tries < 40) {
-            tries++
-            try {
-                Thread.sleep(3000)
-            } catch (e: InterruptedException) {
-                throw OnlineException("متوقف شد.")
-            }
-            val st = http(origin + "/v1beta/" + info.getString("name"), "GET", mapOf("x-goog-api-key" to cfg.key.trim()), null, null)
-            if (st.status !in 200..299) throw OnlineException(httpMessage(st.status, st.body))
-            info = try {
-                JSONObject(st.body)
-            } catch (e: Exception) {
-                throw OnlineException("پاسخ سرویس نامعتبر بود.")
-            }
-        }
-        val state = info.optString("state", "ACTIVE")
-        if (state == "FAILED") throw OnlineException("سرویس نتوانست این PDF را پردازش کند.")
-        if (state == "PROCESSING") throw OnlineException("پردازش PDF طول کشید؛ دوباره امتحان کنید.")
-        val uri = info.optString("uri", "")
-        if (uri.isBlank()) throw OnlineException("پاسخ سرویس نامعتبر بود.")
-        return GeminiFile(info.optString("name", ""), uri, mime)
-    }
+        retries: Int = 2,
+        retryDelayMs: Long = 8000
+    ): List<Question> = generateWith(cfg, imagesRequestBody(pages, n), random, retries, retryDelayMs)
 }
 
-class GeminiFile(val name: String, val uri: String, val mime: String = "application/pdf")
+class PdfBatch(val pages: List<Int>, val n: Int)
