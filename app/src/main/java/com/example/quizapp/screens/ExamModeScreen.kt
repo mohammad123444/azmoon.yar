@@ -187,6 +187,7 @@ fun ExamModeScreen(
     }
 
     if (finished) {
+        val fallbackFinish = remember { System.currentTimeMillis() }
         val tally = SessionLogic.tally(total, marks)
         val result: StudentResult? = if (exam.isTest) {
             StudentResult(
@@ -198,7 +199,7 @@ fun ExamModeScreen(
                 order = order,
                 chosen = order.indices.map { answers[it]?.trim()?.toIntOrNull() ?: -1 },
                 durationSec = ((finishedAt - startedAt) / 1000).toInt().coerceAtLeast(0),
-                finishedAt = if (finishedAt > 0L) finishedAt else System.currentTimeMillis(),
+                finishedAt = if (finishedAt > 0L) finishedAt else fallbackFinish,
                 reportedCorrect = tally.correct,
                 reportedTotal = total,
                 timeLimitMin = limitMin
@@ -450,8 +451,9 @@ private fun ExamResultView(
             if (result != null) {
                 item {
                     Column(modifier = Modifier.fillMaxWidth()) {
+                        OnlineSubmitStatus(result)
                         Text(
-                            "نتیجه را برای معلم بفرستید تا نمره‌ات را ببیند.",
+                            "اگر ارسال خودکار نشد، نتیجه را دستی برای معلم بفرستید.",
                             fontSize = 13.sp,
                             color = Color.Gray
                         )
@@ -604,4 +606,52 @@ internal fun shareTextMessage(context: Context, text: String, title: String) {
         putExtra(Intent.EXTRA_TEXT, text)
     }
     context.startActivity(Intent.createChooser(intent, title))
+}
+
+/** ارسال خودکار نتیجه به معلم (فقط وقتی آزمون با کد آنلاین گرفته شده است) */
+@Composable
+private fun OnlineSubmitStatus(result: StudentResult) {
+    val context = LocalContext.current
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val available = remember(result.id) { com.example.quizapp.OnlineApi.canSubmit(context, result) }
+    // ۰ = در حال ارسال، ۱ = ارسال شد، ۲ = ناموفق
+    var state by remember(result.id) { mutableIntStateOf(0) }
+    var error by remember(result.id) { mutableStateOf("") }
+    var attempt by remember(result.id) { mutableIntStateOf(0) }
+
+    androidx.compose.runtime.LaunchedEffect(result.id, attempt, available) {
+        if (available) {
+            state = 0
+            try {
+                val ok = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    com.example.quizapp.OnlineApi.submitResult(context, result)
+                }
+                state = if (ok) 1 else 2
+            } catch (e: com.example.quizapp.OnlineException) {
+                error = e.userMessage
+                state = 2
+            } catch (e: Exception) {
+                error = "ارسال انجام نشد."
+                state = 2
+            }
+        }
+    }
+
+    if (available) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            when (state) {
+                0 -> Text("⏳ در حال ارسال نتیجه به معلم...", fontSize = 15.sp)
+                1 -> Text("✅ نتیجه برای معلم ارسال شد.", color = GreenDark, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                else -> {
+                    Text("❌ $error", color = Color(0xFFC62828), fontSize = 14.sp, lineHeight = 21.sp)
+                    Spacer(Modifier.height(6.dp))
+                    OutlinedButton(
+                        onClick = { attempt += 1 },
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                    ) { Text("🔄 ارسال دوباره") }
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+        }
+    }
 }

@@ -41,6 +41,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.quizapp.Book
 import com.example.quizapp.Exam
+import com.example.quizapp.OnlineApi
+import com.example.quizapp.OnlineException
+import com.example.quizapp.SessionLogic
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import androidx.compose.runtime.rememberCoroutineScope
 import com.example.quizapp.ExamSearch
 import com.example.quizapp.ResultCodec
 import com.example.quizapp.ResultLogic
@@ -111,6 +118,9 @@ fun TeacherResultsScreen(
             )
         }
         Spacer(Modifier.height(12.dp))
+
+        OnlineCard(bookName = bookName, exam = exam, onFetched = { tick++ })
+        Spacer(Modifier.height(16.dp))
 
         // ---- افزودن نتیجه ----
         Card(
@@ -328,6 +338,120 @@ private fun ResultCard(
                         lineHeight = 18.sp
                     )
                     Spacer(Modifier.height(6.dp))
+                }
+            }
+        }
+    }
+}
+
+/** انتشار آنلاین آزمون (کد ۶ نویسه‌ای) و دریافت خودکار نتیجه‌ها از سرور */
+@Composable
+private fun OnlineCard(bookName: String, exam: Exam, onFetched: () -> Unit) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val fp = remember(exam) { SessionLogic.fingerprint(exam) }
+    var code by remember(fp) { mutableStateOf(OnlineApi.codeFor(context, fp)) }
+    var account by remember { mutableStateOf(OnlineApi.account(context)) }
+    var busy by remember { mutableStateOf(false) }
+    var message by remember { mutableStateOf<String?>(null) }
+    var ok by remember { mutableStateOf(true) }
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        if (!OnlineApi.configured || account == null) {
+            TeacherAccountCard(onChanged = { account = it })
+        }
+        if (OnlineApi.configured && account != null) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = GreenLight)
+            ) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Text("🌐 ارسال آنلاین به دانش‌آموزان", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    Spacer(Modifier.height(6.dp))
+                    val c = code
+                    if (c == null) {
+                        Text(
+                            "آزمون را منتشر کنید تا یک کد کوتاه ساخته شود. دانش‌آموز فقط کد را وارد می‌کند و نتیجه‌اش خودکار برای شما می‌آید.",
+                            color = Color.Black,
+                            fontSize = 13.sp,
+                            lineHeight = 20.sp
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Button(
+                            onClick = {
+                                scope.launch {
+                                    busy = true
+                                    message = null
+                                    try {
+                                        code = withContext(Dispatchers.IO) { OnlineApi.publish(context, bookName, exam) }
+                                        ok = true
+                                        message = "آزمون منتشر شد."
+                                    } catch (e: OnlineException) {
+                                        ok = false
+                                        message = e.userMessage
+                                    } catch (e: Exception) {
+                                        ok = false
+                                        message = "انتشار انجام نشد. دوباره امتحان کنید."
+                                    }
+                                    busy = false
+                                }
+                            },
+                            enabled = !busy,
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary, contentColor = Color.White)
+                        ) { Text(if (busy) "صبر کنید..." else "🌐 انتشار آنلاین و ساخت کد", fontSize = 16.sp) }
+                    } else {
+                        Text("کد آزمون:", color = Color.Black, fontSize = 13.sp)
+                        Text(c, color = GreenDark, fontSize = 34.sp, fontWeight = FontWeight.Bold, letterSpacing = 4.sp)
+                        Spacer(Modifier.height(8.dp))
+                        Button(
+                            onClick = {
+                                shareTextMessage(
+                                    context,
+                                    "📝 آزمون «${exam.title}»" + (if (exam.timeLimitMin > 0) " (${exam.timeLimitMin} دقیقه)" else "") +
+                                        "\nکد آزمون: $c\nدر برنامهٔ آزمون‌یار: 📥 دریافت آزمون ← کد آزمون آنلاین را وارد کنید.\nیا این لینک را باز کنید: azmoon://exam?c=$c",
+                                    "ارسال کد آزمون"
+                                )
+                            },
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary, contentColor = Color.White)
+                        ) { Text("📤 ارسال کد به دانش‌آموزان", fontSize = 16.sp) }
+                        Spacer(Modifier.height(8.dp))
+                        OutlinedButton(
+                            onClick = {
+                                scope.launch {
+                                    busy = true
+                                    message = null
+                                    try {
+                                        val f = withContext(Dispatchers.IO) { OnlineApi.fetchResults(context, exam) }
+                                        ok = true
+                                        message = if (f.total == 0) "هنوز کسی نتیجه نفرستاده است."
+                                        else "${f.total} نتیجه روی سرور هست؛ ${f.added} مورد تازه اضافه شد."
+                                        onFetched()
+                                    } catch (e: OnlineException) {
+                                        ok = false
+                                        message = e.userMessage
+                                    } catch (e: Exception) {
+                                        ok = false
+                                        message = "دریافت نتیجه‌ها انجام نشد."
+                                    }
+                                    busy = false
+                                }
+                            },
+                            enabled = !busy,
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)
+                        ) { Text(if (busy) "صبر کنید..." else "🔄 دریافت نتیجه‌ها", fontSize = 16.sp) }
+                    }
+                    val msg = message
+                    if (msg != null) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            (if (ok) "✅ " else "❌ ") + msg,
+                            color = if (ok) GreenDark else ResRed,
+                            fontSize = 14.sp,
+                            lineHeight = 21.sp
+                        )
+                    }
                 }
             }
         }

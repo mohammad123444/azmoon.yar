@@ -43,6 +43,8 @@ import com.example.quizapp.ExamText
 import com.example.quizapp.FileInspection
 import com.example.quizapp.FileInspector
 import com.example.quizapp.FileKind
+import com.example.quizapp.OnlineApi
+import com.example.quizapp.OnlineException
 import com.example.quizapp.ResultCodec
 import com.example.quizapp.SharedExam
 import com.example.quizapp.ui.theme.GreenDark
@@ -82,6 +84,36 @@ fun ImportScreen(
     var importError by remember { mutableStateOf<String?>(null) }
     var showText by remember(initialText) { mutableStateOf(initialText.isNotBlank()) }
     var text by remember(initialText) { mutableStateOf(initialText) }
+    var onlineCode by remember { mutableStateOf("") }
+    var onlineMsg by remember { mutableStateOf<String?>(null) }
+    var onlineBusy by remember { mutableStateOf(false) }
+
+    // دریافت آزمون آنلاین با کد (دانش‌آموز بدون ورود)
+    fun fetchOnline(raw: String) {
+        scope.launch {
+            onlineBusy = true
+            onlineMsg = null
+            try {
+                val shared = withContext(Dispatchers.IO) { OnlineApi.fetchExam(context, raw) }
+                onlineCode = ""
+                onImported(shared)
+            } catch (e: OnlineException) {
+                onlineMsg = e.userMessage
+            } catch (e: Exception) {
+                onlineMsg = "دریافت انجام نشد. دوباره امتحان کنید."
+            }
+            onlineBusy = false
+        }
+    }
+
+    // اگر لینک azmoon://exam?c=کد باز شده باشد، خودکار دریافت می‌شود
+    LaunchedEffect(initialText) {
+        if (initialText.startsWith("azmoon://exam?c=") && OnlineApi.configured && OnlineApi.codeFromText(initialText) != null) {
+            showText = false
+            onlineCode = OnlineApi.codeFromText(initialText).orEmpty()
+            fetchOnline(initialText)
+        }
+    }
 
     // بررسی فایل انتخاب‌شده (بدون ذخیره یا کپی)
     fun inspectPicked(uri: Uri?) {
@@ -175,6 +207,40 @@ fun ImportScreen(
         } else if (busy) {
             Text("در حال بررسی فایل...", color = Color.Gray)
             Spacer(Modifier.height(14.dp))
+        }
+
+        if (OnlineApi.configured) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+            ) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Text("🔢 کد آزمون", fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                    Spacer(Modifier.height(2.dp))
+                    Text("کد ۶ حرفی که معلم فرستاده را بنویسید.", color = Color.Gray, fontSize = 13.sp)
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = onlineCode,
+                        onValueChange = { onlineCode = it.take(40) },
+                        label = { Text("کد آزمون (مثلاً K7M2QX)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    val om = onlineMsg
+                    if (om != null) {
+                        Spacer(Modifier.height(6.dp))
+                        Text("❌ $om", color = ImportRed, fontSize = 14.sp, lineHeight = 21.sp)
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Button(
+                        onClick = { fetchOnline(onlineCode) },
+                        enabled = !onlineBusy && onlineCode.isNotBlank(),
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary, contentColor = Color.White)
+                    ) { Text(if (onlineBusy) "در حال دریافت..." else "دریافت آزمون", fontSize = 16.sp) }
+                }
+            }
+            Spacer(Modifier.height(10.dp))
         }
 
         RouteCard(

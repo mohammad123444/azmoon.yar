@@ -159,7 +159,7 @@ fun ExamTestEditorScreen(
                         modifier = Modifier.fillMaxWidth()
                     )
                     Spacer(Modifier.height(6.dp))
-                    Text("گزینه‌ها (دایرهٔ کنار گزینهٔ درست را بزنید)", color = Color.Gray, fontSize = 12.sp)
+                    Text("۴ گزینه (دایرهٔ کنار گزینهٔ درست را بزنید)", color = Color.Gray, fontSize = 12.sp)
                     d.options.forEachIndexed { oi, text ->
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             RadioButton(selected = d.correct == oi, onClick = { d.correct = oi })
@@ -207,8 +207,8 @@ fun ExamTestEditorScreen(
                         val newCorrect = kept.indexOfFirst { it.first == d.correct }
                         if (d.q.isBlank()) {
                             problem = "سوال $n: متن سوال خالی است."
-                        } else if (kept.size < 2) {
-                            problem = "سوال $n: دست‌کم دو گزینه بنویسید."
+                        } else if (kept.size < 4) {
+                            problem = "سوال $n: هر سوال باید ۴ گزینه داشته باشد؛ هر ۴ گزینه را بنویسید."
                         } else if (newCorrect < 0) {
                             problem = "سوال $n: گزینهٔ درست را انتخاب کنید (گزینهٔ درست نباید خالی باشد)."
                         } else {

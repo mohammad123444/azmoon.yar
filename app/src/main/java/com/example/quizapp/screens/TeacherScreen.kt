@@ -61,6 +61,8 @@ fun TeacherScreen(
             color = Color.Gray,
             fontSize = 13.sp
         )
+        Spacer(Modifier.height(12.dp))
+        TeacherAccountCard()
         Spacer(Modifier.height(16.dp))
 
         OutlinedTextField(
